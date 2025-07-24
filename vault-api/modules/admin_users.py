@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 from admin_styles import ADMIN_STYLES, get_nav_html, LOGOUT_SCRIPT
 
-router = APIRouter(prefix="/admin", tags=["admin-users"])
+router = APIRouter(prefix="", tags=["admin-users"])
 
 @router.get("/users", response_class=HTMLResponse)
 async def admin_users_page():
