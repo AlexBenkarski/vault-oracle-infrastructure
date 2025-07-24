@@ -1,15 +1,12 @@
 """Admin API Routes - All admin functionality endpoints"""
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 import sqlite3
 import os
 import shutil
 import subprocess
 import hashlib
-import csv
-import io
-import bcrypt
 from datetime import datetime
 from typing import List
 
@@ -21,17 +18,6 @@ from services_monitor import get_all_services_status
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-def hash_password(password: str) -> str:
-    """Hash password using bcrypt"""
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
-def verify_password(password: str, hashed: str) -> bool:
-    """Verify password against hash"""
-    try:
-        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-    except:
-        return False
-
 # ADMIN AUTHENTICATION
 @router.post("/auth")
 async def admin_login(login_data: AdminLogin):
@@ -40,31 +26,17 @@ async def admin_login(login_data: AdminLogin):
         # Check credentials against database
         conn = sqlite3.connect(USER_DB_PATH)
         
+        # Use SHA256 for admin password (legacy compatibility)
+        password_hash = hashlib.sha256(login_data.password.encode()).hexdigest()
+        
         cursor = conn.execute('''
             SELECT username, password_hash FROM admin_users 
-            WHERE username = ?
-        ''', (login_data.username,))
+            WHERE username = ? AND password_hash = ?
+        ''', (login_data.username, password_hash))
         
         result = cursor.fetchone()
         
         if not result:
-            conn.close()
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        
-        username, stored_hash = result
-        
-        # Try both bcrypt and SHA256 for backward compatibility
-        password_valid = False
-        
-        # First try bcrypt (preferred)
-        if stored_hash.startswith('$2b$'):
-            password_valid = verify_password(login_data.password, stored_hash)
-        else:
-            # Try SHA256 (legacy)
-            sha256_hash = hashlib.sha256(login_data.password.encode()).hexdigest()
-            password_valid = (stored_hash == sha256_hash)
-        
-        if not password_valid:
             conn.close()
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
@@ -145,22 +117,6 @@ async def get_users_data(admin_user: str = Depends(verify_admin_token)):
     
     return users
 
-@router.get("/users/admins")
-async def get_admin_users(admin_user: str = Depends(verify_admin_token)):
-    """Get list of admin users"""
-    conn = sqlite3.connect(USER_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    
-    cursor = conn.execute('''
-        SELECT username, created_at, last_login
-        FROM admin_users ORDER BY created_at DESC
-    ''')
-    
-    admins = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    
-    return admins
-
 @router.post("/users/beta")
 async def toggle_user_beta(action_data: UserAction, admin_user: str = Depends(verify_admin_token)):
     """Grant or revoke beta access for user"""
@@ -177,132 +133,6 @@ async def toggle_user_beta(action_data: UserAction, admin_user: str = Depends(ve
     conn.close()
     
     return {"message": f"Beta access {'granted' if grant_beta else 'revoked'} successfully"}
-
-@router.delete("/users/delete")
-async def delete_user(user_data: dict, admin_user: str = Depends(verify_admin_token)):
-    """Delete a user account permanently"""
-    user_id = user_data.get('user_id')
-    email = user_data.get('email')
-    
-    if not user_id or not email:
-        raise HTTPException(status_code=400, detail="User ID and email required")
-    
-    conn = sqlite3.connect(USER_DB_PATH)
-    
-    # Verify user exists
-    cursor = conn.execute('SELECT id, email FROM users WHERE id = ? AND email = ?', 
-                         (user_id, email))
-    result = cursor.fetchone()
-    
-    if not result:
-        conn.close()
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Also remove from admin_users if they are an admin
-    conn.execute('DELETE FROM admin_users WHERE username = ?', (email,))
-    
-    # Delete user
-    conn.execute('DELETE FROM users WHERE id = ? AND email = ?', (user_id, email))
-    conn.commit()
-    conn.close()
-    
-    return {"message": f"User {email} deleted successfully"}
-
-@router.post("/users/make-admin")
-async def make_user_admin(user_data: dict, admin_user: str = Depends(verify_admin_token)):
-    """Grant admin access to a user"""
-    user_id = user_data.get('user_id')
-    email = user_data.get('email')
-    
-    if not user_id or not email:
-        raise HTTPException(status_code=400, detail="User ID and email required")
-    
-    conn = sqlite3.connect(USER_DB_PATH)
-    
-    # Verify user exists
-    cursor = conn.execute('SELECT id, email, password_hash FROM users WHERE id = ? AND email = ?', 
-                         (user_id, email))
-    result = cursor.fetchone()
-    
-    if not result:
-        conn.close()
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    user_id, user_email, password_hash = result
-    
-    # Check if already admin
-    cursor = conn.execute('SELECT username FROM admin_users WHERE username = ?', (user_email,))
-    if cursor.fetchone():
-        conn.close()
-        raise HTTPException(status_code=400, detail="User already has admin access")
-    
-    # Add to admin_users table using their existing password hash (which should be bcrypt)
-    conn.execute('''
-        INSERT INTO admin_users (username, password_hash, created_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-    ''', (user_email, password_hash))
-    
-    conn.commit()
-    conn.close()
-    
-    return {"message": f"Admin access granted to {user_email}"}
-
-@router.post("/users/revoke-admin")
-async def revoke_user_admin(user_data: dict, admin_user: str = Depends(verify_admin_token)):
-    """Revoke admin access from a user"""
-    user_id = user_data.get('user_id')
-    email = user_data.get('email')
-    
-    if not user_id or not email:
-        raise HTTPException(status_code=400, detail="User ID and email required")
-    
-    # Prevent revoking access from the main admin account
-    if email == "admin":
-        raise HTTPException(status_code=400, detail="Cannot revoke access from main admin account")
-    
-    conn = sqlite3.connect(USER_DB_PATH)
-    
-    # Verify user exists and is admin
-    cursor = conn.execute('SELECT username FROM admin_users WHERE username = ?', (email,))
-    if not cursor.fetchone():
-        conn.close()
-        raise HTTPException(status_code=404, detail="User is not an admin")
-    
-    # Remove from admin_users table
-    conn.execute('DELETE FROM admin_users WHERE username = ?', (email,))
-    conn.commit()
-    conn.close()
-    
-    return {"message": f"Admin access revoked from {email}"}
-
-@router.get("/users/export")
-async def export_users(admin_user: str = Depends(verify_admin_token)):
-    """Export users data as CSV"""
-    conn = sqlite3.connect(USER_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    
-    cursor = conn.execute('''
-        SELECT id, email, email_verified, has_beta, created_at, last_login
-        FROM users ORDER BY created_at DESC
-    ''')
-    
-    users = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    
-    # Create CSV content
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=['id', 'email', 'email_verified', 'has_beta', 'created_at', 'last_login'])
-    writer.writeheader()
-    writer.writerows(users)
-    
-    csv_content = output.getvalue()
-    output.close()
-    
-    return Response(
-        content=csv_content,
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=vault-users.csv"}
-    )
 
 # RELEASE MANAGEMENT
 @router.post("/releases/upload")
@@ -349,6 +179,47 @@ async def get_releases(admin_user: str = Depends(verify_admin_token)):
     conn.close()
     
     return releases
+
+@router.get("/releases/enhanced-list")
+async def get_enhanced_releases(admin_user: str = Depends(verify_admin_token)):
+    """Get releases with enhanced format (compatible with existing schema)"""
+    conn = sqlite3.connect(USER_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    
+    cursor = conn.execute('''
+        SELECT id, filename, version, file_size, status, uploaded_at, activated_at,
+               file_path
+        FROM file_releases ORDER BY uploaded_at DESC
+    ''')
+    
+    releases = []
+    for row in cursor.fetchall():
+        release = {
+            "id": row["id"],
+            "version": row["version"],
+            "vault_exe_path": row["file_path"],
+            "vault_setup_exe_path": None,
+            "vault_exe_size": row["file_size"],
+            "vault_setup_exe_size": 0,
+            "status": "production" if row["status"] == "live" else ("archived" if row["status"] == "archived" else "staging"),
+            "rollout_percentage": 100 if row["status"] == "live" else 0,
+            "force_update": False,
+            "force_rollback": False,
+            "release_notes": "",
+            "uploaded_at": row["uploaded_at"],
+            "deployed_at": row["activated_at"],
+            "created_by": "admin",
+            "vault_exe_exists": bool(row["file_path"] and os.path.exists(row["file_path"])),
+            "vault_setup_exe_exists": False
+        }
+        releases.append(release)
+    
+    conn.close()
+    
+    return {
+        "releases": releases,
+        "config": {}
+    }
 
 @router.post("/releases/activate")
 async def activate_release(release_data: ReleaseData, admin_user: str = Depends(verify_admin_token)):
