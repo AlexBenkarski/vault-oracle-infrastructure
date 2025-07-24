@@ -1,0 +1,24 @@
+
+
+[Unit]
+Description=unified-monitoring-agent Fluentd configuration downloader.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+Group=root
+CPUQuota=40%
+MemoryLimit=5120M
+LimitNOFILE=65536
+Environment=PATH=/opt/unified-monitoring-agent/embedded/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+Environment=GEM_HOME=/opt/unified-monitoring-agent/embedded/lib/ruby/gems/3.0.0/
+Environment=GEM_PATH=/opt/unified-monitoring-agent/embedded/lib/ruby/gems/3.0.0/
+RuntimeDirectory=unified-monitoring-agent
+Type=oneshot
+ExecStart=/opt/unified-monitoring-agent/embedded/bin/ruby /opt/unified-monitoring-agent/embedded/bin/fluent_config_updater.rb -c /etc/unified-monitoring-agent/conf.d/ -b 10
+TimeoutStopSec=600
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

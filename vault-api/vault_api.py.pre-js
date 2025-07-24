@@ -1,0 +1,1521 @@
+from fastapi import FastAPI, HTTPException, status, Depends, Form, Request, UploadFile, File
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr
+import sqlite3
+from datetime import datetime, timedelta
+import os
+from typing import Optional, List
+import hashlib
+import bcrypt
+import secrets
+import jwt
+import re
+import shutil
+import json
+from models import AnalyticsDB
+from services_monitor import get_all_services_status, restart_service_safe
+
+app = FastAPI(title="Vault Key Validation API")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://getvaultdesktop.com", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# JWT Configuration
+SECRET_KEY = "vault-secret-key-change-in-production"  # Change this!
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_HOURS = 24
+security = HTTPBearer()
+
+# Database paths
+DB_PATH = "/opt/discord-bot/bot_data.db"
+analytics_db = AnalyticsDB("/opt/vault-api/analytics.db")
+
+# File upload configuration
+UPLOAD_DIR = "/opt/vault-files"
+os.makedirs(f"{UPLOAD_DIR}/staging", exist_ok=True)
+os.makedirs(f"{UPLOAD_DIR}/current", exist_ok=True)
+os.makedirs(f"{UPLOAD_DIR}/archive", exist_ok=True)
+
+# Existing models
+class KeyValidationRequest(BaseModel):
+    beta_key: str
+    username: str
+
+class KeyValidationResponse(BaseModel):
+    valid: bool
+    message: str
+    user_info: Optional[dict] = None
+
+class AnalyticsPayload(BaseModel):
+    vault_id: str
+    version: str
+    os: str
+    consent_given: bool
+    install_metrics: dict
+    vault_stats: dict
+    feature_usage: dict
+    performance: dict
+
+# New authentication models
+class UserSignup(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserSignin(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserAction(BaseModel):
+    user_id: int
+    action: str  # 'verify', 'grant_beta', 'revoke_beta', 'suspend'
+
+# Initialize user authentication database
+def init_user_database():
+    """Initialize user authentication database"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            email_verified BOOLEAN DEFAULT TRUE,
+            has_beta BOOLEAN DEFAULT FALSE,
+            verification_token TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        )
+    ''')
+
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            email TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        )
+    ''')
+    
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS beta_keys (
+            id INTEGER PRIMARY KEY,
+            key_value TEXT UNIQUE NOT NULL,
+            user_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            activated_at TIMESTAMP,
+            status TEXT DEFAULT 'unused',
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS file_releases (
+            id INTEGER PRIMARY KEY,
+            filename TEXT NOT NULL,
+            version TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_size INTEGER,
+            status TEXT DEFAULT 'staging',
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            activated_at TIMESTAMP
+        )
+    ''')
+
+    # Create default admin user (password: Chance19!)
+    admin_hash = hashlib.sha256("Chance19!".encode()).hexdigest()
+    conn.execute('''
+        INSERT OR IGNORE INTO admin_users (username, password_hash, email)
+        VALUES (?, ?, ?)
+    ''', ("admin", admin_hash, "admin@getvaultdesktop.com"))
+
+    conn.commit()
+    conn.close()
+
+# Initialize user database
+init_user_database()
+
+# Authentication helper functions
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return email
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def verify_admin_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        role = payload.get("role")
+        if username is None or role != "admin":
+            raise HTTPException(status_code=401, detail="Admin access required")
+        return username
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+def is_valid_email(email: str) -> bool:
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+def generate_beta_key() -> str:
+    """Generate a new beta key"""
+    segments = []
+    for _ in range(3):
+        segment = ''.join(secrets.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(4))
+        segments.append(segment)
+    return f"VAULT-{'-'.join(segments)}"
+
+# Existing beta key functions
+def get_db_connection():
+    """Get database connection"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row  # Returns dict-like rows
+    return conn
+
+def find_user_by_beta_key(beta_key: str):
+    """Find user who owns this beta key"""
+    conn = get_db_connection()
+    try:
+        # Query user_data table for current_beta_key (not beta_key)
+        cursor = conn.execute(
+            "SELECT discord_id FROM user_data WHERE key = 'current_beta_key' AND value = ?",
+            (beta_key,)
+        )
+        result = cursor.fetchone()
+
+        if result:
+            # Get user details
+            user_cursor = conn.execute(
+                "SELECT * FROM users WHERE discord_id = ?",
+                (result['discord_id'],)
+            )
+            user = user_cursor.fetchone()
+            return dict(user) if user else None
+        return None
+    finally:
+        conn.close()
+
+def check_key_status(discord_id: str):
+    """Check if user's beta access is still valid"""
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            "SELECT value FROM user_data WHERE discord_id = ? AND key = 'status'",
+            (discord_id,)
+        )
+        result = cursor.fetchone()
+        return result['value'] if result else 'approved'  # Default to approved
+    finally:
+        conn.close()
+
+def mark_key_as_used(discord_id: str, username: str):
+    """Mark beta key as activated"""
+    conn = get_db_connection()
+    try:
+        # Update activation info
+        conn.execute(
+            "INSERT OR REPLACE INTO user_data (discord_id, key, value) VALUES (?, 'activated_at', ?)",
+            (discord_id, datetime.now().isoformat())
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO user_data (discord_id, key, value) VALUES (?, 'vault_username', ?)",
+            (discord_id, username)
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO user_data (discord_id, key, value) VALUES (?, 'status', 'activated')",
+            (discord_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+# COMMON ADMIN STYLES
+ADMIN_STYLES = '''
+<style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #1a1a1a; color: white; }
+    .header { display: flex; justify-content: space-between; margin-bottom: 30px; align-items: center; }
+    .nav { background: #333; padding: 15px; border-radius: 8px; margin-bottom: 30px; }
+    .nav a { color: #4CAF50; text-decoration: none; margin-right: 25px; padding: 8px 16px; border-radius: 4px; font-weight: 500; }
+    .nav a:hover, .nav a.active { background: #4CAF50; color: white; }
+    .card { background: #2d2d2d; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #444; }
+    .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin: 2px; font-weight: 500; }
+    .btn-primary { background: #4CAF50; color: white; }
+    .btn-danger { background: #f44336; color: white; }
+    .btn-warning { background: #FF9800; color: white; }
+    .btn-secondary { background: #6c757d; color: white; }
+    .btn:hover { opacity: 0.8; }
+    .table { width: 100%; border-collapse: collapse; background: #2d2d2d; }
+    .table th, .table td { padding: 12px; text-align: left; border-bottom: 1px solid #444; }
+    .table th { background: #4CAF50; color: white; }
+    .badge { padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; }
+    .badge-success { background: #4CAF50; color: white; }
+    .badge-warning { background: #FF9800; color: white; }
+    .badge-danger { background: #f44336; color: white; }
+    .badge-secondary { background: #6c757d; color: white; }
+    .upload-area { border: 2px dashed #4CAF50; padding: 40px; text-align: center; border-radius: 8px; margin: 20px 0; }
+    .upload-area:hover { background: rgba(76, 175, 80, 0.1); }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
+    .stat-card { background: #2d2d2d; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #4CAF50; }
+    .stat-number { font-size: 2rem; color: #4CAF50; font-weight: bold; }
+    .stat-label { color: #a0a0a0; text-transform: uppercase; font-size: 0.9rem; }
+    .form-group { margin-bottom: 15px; }
+    .form-group label { display: block; margin-bottom: 5px; color: #fff; }
+    .form-group input, .form-group select { width: 100%; padding: 10px; background: #333; border: 1px solid #555; border-radius: 4px; color: white; }
+</style>
+'''
+
+# ENDPOINTS
+
+@app.get("/")
+async def root():
+    return {"message": "Vault Key Validation API", "status": "online", "version": "2.0"}
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    try:
+        conn = get_db_connection()
+        conn.close()
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database connection failed: {str(e)}"
+        )
+
+# User Authentication Endpoints
+@app.post("/auth/signup")
+async def signup(user: UserSignup):
+    """Register new user account"""
+    if not is_valid_email(user.email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+
+    if len(user.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+
+    # Check if user exists
+    cursor = conn.execute("SELECT email FROM users WHERE email = ?", (user.email,))
+    if cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Create user
+    password_hash = hash_password(user.password)
+
+    conn.execute('''
+        INSERT INTO users (email, password_hash, email_verified)
+        VALUES (?, ?, ?)
+    ''', (user.email, password_hash, True))  # Auto-verify for now
+
+    conn.commit()
+    conn.close()
+
+    return {"message": "Account created successfully!"}
+
+@app.post("/auth/signin")
+async def signin(user: UserSignin):
+    """Sign in user"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+
+    cursor = conn.execute('''
+        SELECT email, password_hash, email_verified
+        FROM users WHERE email = ?
+    ''', (user.email,))
+
+    result = cursor.fetchone()
+    conn.close()
+
+    if not result or not verify_password(user.password, result[1]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if not result[2]:  # email_verified
+        raise HTTPException(status_code=401, detail="Please verify your email first")
+
+    token = create_access_token({"sub": user.email})
+    return {"token": token, "message": "Sign in sucessful"}
+
+    # Update last login
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    conn.execute('''
+        UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE email = ?
+
+    # Create JWT token
+    token = create_access_token({"sub": user.email})
+    return {"token": token, "message": "Sign in successful"}
+
+    # Create JWT token
+    token = create_access_token({"sub": user.email})
+    return {"token": token, "message": "Sign in successful"}
+    ''', (user.email,))
+    conn.commit()
+    conn.close()
+
+
+@app.post("/auth/login")
+async def login(user: UserSignin):
+    """Login alias for signin"""
+    return await signin(user)
+    # Create JWT token
+    token = create_access_token({"sub": user.email})
+
+    return {"token": token, "message": "Sign in successful"}
+
+# Admin Authentication
+@app.post("/admin/auth")
+async def admin_login(username: str = Form(), password: str = Form()):
+    """Admin login"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+
+    cursor = conn.execute('''
+        SELECT username, password_hash FROM admin_users WHERE username = ?
+    ''', (username,))
+
+    result = cursor.fetchone()
+    conn.close()
+
+    if not result or not verify_password(password, result[1]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # Update last login
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    conn.execute('''
+        UPDATE admin_users SET last_login = CURRENT_TIMESTAMP WHERE username = ?
+    ''', (username,))
+    conn.commit()
+    conn.close()
+
+    # Create admin token
+    token = create_access_token({"sub": username, "role": "admin"})
+
+    return {"token": token, "message": "Admin login successful"}
+
+# Admin Pages
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_login_page():
+    """Admin login page"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Admin Login - TheVault</title>
+        <style>
+            body {
+                font-family: 'Segoe UI', sans-serif;
+                background: #1a1a1d;
+                color: white;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+            }
+            .login-box {
+                background: #2d2d30;
+                padding: 40px;
+                border-radius: 12px;
+                border: 2px solid #4CAF50;
+                width: 300px;
+            }
+            h2 { color: #4CAF50; text-align: center; margin-bottom: 30px; }
+            input {
+                width: 100%;
+                padding: 12px;
+                margin: 10px 0;
+                background: rgba(255,255,255,0.1);
+                border: 1px solid rgba(255,255,255,0.3);
+                border-radius: 6px;
+                color: white;
+                box-sizing: border-box;
+            }
+            button {
+                width: 100%;
+                padding: 12px;
+                background: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+                cursor: pointer;
+            }
+            button:hover { background: #45a049; }
+            .error { color: #ff4757; margin-top: 10px; text-align: center; }
+        </style>
+    </head>
+    <body>
+        <div class="login-box">
+            <h2>Admin Login</h2>
+            <form id="adminForm">
+                <input type="text" name="username" placeholder="Username" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Login</button>
+                <div id="error" class="error"></div>
+            </form>
+        </div>
+
+        <script>
+            document.getElementById('adminForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const formData = new FormData(this);
+
+                try {
+                    const response = await fetch('/admin/auth', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        localStorage.setItem('admin_token', data.token);
+                        window.location.href = '/admin/dashboard';
+                    } else {
+                        document.getElementById('error').textContent = data.detail;
+                    }
+                } catch (error) {
+                    document.getElementById('error').textContent = 'Network error';
+                }
+            });
+        </script>
+    </body>
+    </html>
+    '''
+
+@app.get("/admin/dashboard", response_class=HTMLResponse)
+async def admin_dashboard():
+    """Admin dashboard"""
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Admin Dashboard - TheVault</title>
+        {ADMIN_STYLES}
+    </head>
+    <body>
+        <div class="header">
+            <h1>Admin Dashboard</h1>
+            <button class="btn btn-danger" onclick="logout()">Logout</button>
+        </div>
+
+        <div class="nav">
+            <a href="/admin/dashboard" class="active">Dashboard</a>
+            <a href="/admin/users">Users</a>
+            <a href="/admin/beta">Beta Keys</a>
+            <a href="/admin/releases">Releases</a>
+            <a href="/admin/analytics">Analytics</a>
+        </div>
+
+        <div class="stats-grid" id="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="total-users">--</div>
+                <div class="stat-label">Total Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="verified-users">--</div>
+                <div class="stat-label">Verified Users</div>
+            </div>
+        <div class="services-section">
+            <h2>🔧 Service Status</h2>
+            <div class="services-grid">
+                <div class="service-card" id="vault-api-card">
+                    <div class="service-header">
+                        <span class="service-name">Vault API</span>
+                        <span class="status-dot" id="vault-api-status"></span>
+                    </div>
+                    <div class="service-stats">
+                        <div>Status: <span id="vault-api-text">--</span></div>
+                        <div>Uptime: <span id="vault-api-uptime">--</span></div>
+                    </div>
+                    <button class="restart-btn" onclick="restartService('vault-api')">Restart</button>
+                </div>
+                <div class="service-card" id="nginx-card">
+                    <div class="service-header">
+                        <span class="service-name">Nginx</span>
+                        <span class="status-dot" id="nginx-status"></span>
+                    </div>
+                    <div class="service-stats">
+                        <div>Status: <span id="nginx-text">--</span></div>
+                        <div>Uptime: <span id="nginx-uptime">--</span></div>
+                    </div>
+                    <button class="restart-btn" onclick="restartService('nginx')">Restart</button>
+                </div>
+                <div class="service-card" id="discord-bot-card">
+                    <div class="service-header">
+                        <span class="service-name">Discord Bot</span>
+                        <span class="status-dot" id="discord-bot-status"></span>
+                    </div>
+                    <div class="service-stats">
+                        <div>Status: <span id="discord-bot-text">--</span></div>
+                        <div>Uptime: <span id="discord-bot-uptime">--</span></div>
+                    </div>
+                    <button class="restart-btn" onclick="restartService('discord-bot')">Restart</button>
+                </div>
+                <div class="service-card" id="website-card">
+                    <div class="service-header">
+                        <span class="service-name">Website</span>
+                        <span class="status-dot" id="website-status"></span>
+                    </div>
+                    <div class="service-stats">
+                        <div>Status: <span id="website-text">--</span></div>
+                        <div>Response: <span id="website-response">--</span></div>
+                    </div>
+                    <button class="restart-btn" disabled>Monitor Only</button>
+                </div>
+                <div class="service-card" id="database-card">
+                    <div class="service-header">
+                        <span class="service-name">Database</span>
+                        <span class="status-dot" id="database-status"></span>
+                    </div>
+                    <div class="service-stats">
+                        <div>Status: <span id="database-text">--</span></div>
+                        <div>Type: SQLite</div>
+                    </div>
+                    <button class="restart-btn" disabled>Monitor Only</button>
+                </div>
+            </div>
+            <div class="master-controls">
+                <button class="btn btn-primary" onclick="refreshServices()">🔄 Refresh All</button>
+                <button class="btn btn-warning" onclick="restartAllServices()">⚠️ Restart All Services</button>
+            </div>
+        </div>
+            <div class="stat-card">
+                <div class="stat-number" id="beta-users">--</div>
+                <div class="stat-label">Beta Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="analytics-users">--</div>
+                <div class="stat-label">Analytics Users</div>
+            </div>
+        </div>
+
+        <script>
+            const token = localStorage.getItem('admin_token');
+            if (!token) window.location.href = '/admin';
+
+            async function loadStats() {{
+                try {{
+                    const response = await fetch('/admin/stats', {{
+                        headers: {{ 'Authorization': `Bearer ${{token}}` }}
+                    }});
+
+                    if (response.ok) {{
+                        const stats = await response.json();
+                        document.getElementById('total-users').textContent = stats.total_users;
+                        document.getElementById('verified-users').textContent = stats.verified_users;
+                        document.getElementById('beta-users').textContent = stats.beta_users;
+                        document.getElementById('analytics-users').textContent = stats.analytics_users;
+                    }} else {{
+                        window.location.href = '/admin';
+                    }}
+                }} catch (error) {{
+                    console.error('Error loading stats:', error);
+                }}
+            }}
+
+            function logout() {{
+                localStorage.removeItem('admin_token');
+                window.location.href = '/admin';
+            }}
+
+            loadStats();
+            setInterval(loadStats, 30000);
+        </script>
+    </body>
+    </html>
+    '''
+
+# USER MANAGEMENT
+@app.get("/admin/users", response_class=HTMLResponse)
+async def admin_users_page():
+    """Admin users management page"""
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>User Management - TheVault Admin</title>
+        {ADMIN_STYLES}
+    </head>
+    <body>
+        <div class="header">
+            <h1>User Management</h1>
+            <button class="btn btn-danger" onclick="logout()">Logout</button>
+        </div>
+        
+        <div class="nav">
+            <a href="/admin/dashboard">Dashboard</a>
+            <a href="/admin/users" class="active">Users</a>
+            <a href="/admin/beta">Beta Keys</a>
+            <a href="/admin/releases">Releases</a>
+            <a href="/admin/analytics">Analytics</a>
+        </div>
+        
+        <div class="card">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Email</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Last Login</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="users-tbody">
+                    <tr><td colspan="6">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <script>
+            const token = localStorage.getItem('admin_token');
+            if (!token) window.location.href = '/admin';
+
+            async function loadUsers() {{
+                try {{
+                    const response = await fetch('/admin/users/data', {{
+                        headers: {{ 'Authorization': `Bearer ${{token}}` }}
+                    }});
+                    const users = await response.json();
+                    
+                    const tbody = document.getElementById('users-tbody');
+                    tbody.innerHTML = users.map(user => `
+                        <tr>
+                            <td>${{user.id}}</td>
+                            <td>${{user.email}}</td>
+                            <td>
+                                ${{user.email_verified ? '<span class="badge badge-success">Verified</span>' : '<span class="badge badge-secondary">Unverified</span>'}}
+                                ${{user.has_beta ? '<span class="badge badge-warning">Beta</span>' : ''}}
+                            </td>
+                            <td>${{new Date(user.created_at).toLocaleDateString()}}</td>
+                            <td>${{user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}}</td>
+                            <td>
+                                ${{!user.has_beta ? `<button class="btn btn-warning" onclick="userAction(${{user.id}}, 'grant_beta')">Grant Beta</button>` : `<button class="btn btn-danger" onclick="userAction(${{user.id}}, 'revoke_beta')">Revoke Beta</button>`}}
+                            </td>
+                        </tr>
+                    `).join('');
+                }} catch (error) {{
+                    console.error('Error:', error);
+                }}
+            }}
+
+            async function userAction(userId, action) {{
+                try {{
+                    await fetch('/admin/users/action', {{
+                        method: 'POST',
+                        headers: {{ 
+                            'Authorization': `Bearer ${{token}}`,
+                            'Content-Type': 'application/json'
+                        }},
+                        body: JSON.stringify({{ user_id: userId, action: action }})
+                    }});
+                    loadUsers();
+                }} catch (error) {{
+                    console.error('Error:', error);
+                }}
+            }}
+
+            function logout() {{
+                localStorage.removeItem('admin_token');
+                window.location.href = '/admin';
+            }}
+
+            loadUsers();
+        </script>
+    </body>
+    </html>
+    '''
+
+@app.get("/admin/users/data")
+async def admin_users_data(admin_user: str = Depends(verify_admin_token)):
+    """Get users data for admin"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    cursor = conn.execute('''
+        SELECT id, email, email_verified, has_beta, created_at, last_login 
+        FROM users 
+        ORDER BY created_at DESC
+    ''')
+    
+    users = []
+    for row in cursor.fetchall():
+        users.append({
+            "id": row[0],
+            "email": row[1],
+            "email_verified": bool(row[2]),
+            "has_beta": bool(row[3]),
+            "created_at": row[4],
+            "last_login": row[5]
+        })
+    
+    conn.close()
+    return users
+
+@app.post("/admin/users/action")
+async def admin_user_action(action: UserAction, admin_user: str = Depends(verify_admin_token)):
+    """Perform admin action on user"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    if action.action == "grant_beta":
+        conn.execute("UPDATE users SET has_beta = TRUE WHERE id = ?", (action.user_id,))
+    elif action.action == "revoke_beta":
+        conn.execute("UPDATE users SET has_beta = FALSE WHERE id = ?", (action.user_id,))
+    elif action.action == "verify":
+        conn.execute("UPDATE users SET email_verified = TRUE WHERE id = ?", (action.user_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return {"message": f"Action {action.action} completed"}
+
+# BETA KEY MANAGEMENT
+@app.get("/admin/beta", response_class=HTMLResponse)
+async def admin_beta_page():
+    """Beta key management page"""
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Beta Key Management - TheVault Admin</title>
+        {ADMIN_STYLES}
+    </head>
+    <body>
+        <div class="header">
+            <h1>Beta Key Management</h1>
+            <button class="btn btn-danger" onclick="logout()">Logout</button>
+        </div>
+        
+        <div class="nav">
+            <a href="/admin/dashboard">Dashboard</a>
+            <a href="/admin/users">Users</a>
+            <a href="/admin/beta" class="active">Beta Keys</a>
+            <a href="/admin/releases">Releases</a>
+            <a href="/admin/analytics">Analytics</a>
+        </div>
+        
+        <div class="card">
+            <h3>Generate New Beta Key</h3>
+            <button class="btn btn-primary" onclick="generateKey()">Generate Beta Key</button>
+            <div id="new-key"></div>
+        </div>
+        
+        <div class="card">
+            <h3>Recent Beta Keys</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>Status</th>
+                        <th>User</th>
+                        <th>Created</th>
+                        <th>Activated</th>
+                    </tr>
+                </thead>
+                <tbody id="keys-tbody">
+                    <tr><td colspan="5">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <script>
+            const token = localStorage.getItem('admin_token');
+            if (!token) window.location.href = '/admin';
+
+            async function generateKey() {{
+                try {{
+                    const response = await fetch('/admin/beta/generate', {{
+                        method: 'POST',
+                        headers: {{ 'Authorization': `Bearer ${{token}}` }}
+                    }});
+                    const data = await response.json();
+                    document.getElementById('new-key').innerHTML = `
+                        <div style="background: #2d2d2d; padding: 20px; margin: 10px 0; border-radius: 8px;">
+                            <strong>New Beta Key:</strong> <code style="background: #1a1a1a; padding: 8px; border-radius: 4px;">${{data.key}}</code>
+                            <button class="btn btn-secondary" onclick="copyKey('${{data.key}}')">Copy</button>
+                        </div>
+                    `;
+                    loadKeys();
+                }} catch (error) {{
+                    console.error('Error:', error);
+                }}
+            }}
+
+            async function loadKeys() {{
+                try {{
+                    const response = await fetch('/admin/beta/keys', {{
+                        headers: {{ 'Authorization': `Bearer ${{token}}` }}
+                    }});
+                    const keys = await response.json();
+                    
+                    const tbody = document.getElementById('keys-tbody');
+                    tbody.innerHTML = keys.map(key => `
+                        <tr>
+                            <td><code>${{key.key_value}}</code></td>
+                            <td><span class="badge badge-${{key.status === 'activated' ? 'success' : 'warning'}}">${{key.status}}</span></td>
+                            <td>${{key.user_email || '<td>${{key.user_email || 'Unassigned'}}</td>
+                            <td>${{new Date(key.created_at).toLocaleDateString()}}</td>
+                            <td>${{key.activated_at ? new Date(key.activated_at).toLocaleDateString() : 'Not activated'}}</td>
+                        </tr>
+                    `).join('');
+                }} catch (error) {{
+                    console.error('Error:', error);
+                }}
+            }}
+
+            function copyKey(key) {{
+                navigator.clipboard.writeText(key);
+                alert('Key copied to clipboard!');
+            }}
+
+            function logout() {{
+                localStorage.removeItem('admin_token');
+                window.location.href = '/admin';
+            }}
+
+            loadKeys();
+        </script>
+    </body>
+    </html>
+    '''
+
+@app.post("/admin/beta/generate")
+async def admin_generate_beta_key(admin_user: str = Depends(verify_admin_token)):
+    """Generate new beta key"""
+    key = generate_beta_key()
+    
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    conn.execute('''
+        INSERT INTO beta_keys (key_value, status) VALUES (?, 'unused')
+    ''', (key,))
+    conn.commit()
+    conn.close()
+    
+    return {"key": key, "message": "Beta key generated"}
+
+@app.get("/admin/beta/keys")
+async def admin_beta_keys(admin_user: str = Depends(verify_admin_token)):
+    """Get beta keys list"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    cursor = conn.execute('''
+        SELECT bk.key_value, bk.status, bk.created_at, bk.activated_at, u.email as user_email
+        FROM beta_keys bk
+        LEFT JOIN users u ON bk.user_id = u.id
+        ORDER BY bk.created_at DESC
+        LIMIT 50
+    ''')
+    
+    keys = []
+    for row in cursor.fetchall():
+        keys.append({
+            "key_value": row[0],
+            "status": row[1],
+            "created_at": row[2],
+            "activated_at": row[3],
+            "user_email": row[4]
+        })
+    
+    conn.close()
+    return keys
+
+# FILE UPLOAD & RELEASE MANAGEMENT
+@app.get("/admin/releases", response_class=HTMLResponse)
+async def admin_releases_page():
+    """Release management page"""
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Release Management - TheVault Admin</title>
+        {ADMIN_STYLES}
+    </head>
+    <body>
+        <div class="header">
+            <h1>Release Management</h1>
+            <button class="btn btn-danger" onclick="logout()">Logout</button>
+        </div>
+        
+        <div class="nav">
+            <a href="/admin/dashboard">Dashboard</a>
+            <a href="/admin/users">Users</a>
+            <a href="/admin/beta">Beta Keys</a>
+            <a href="/admin/releases" class="active">Releases</a>
+            <a href="/admin/analytics">Analytics</a>
+        </div>
+        
+        <div class="card">
+            <h3>Upload New Release</h3>
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label>Version Number:</label>
+                    <input type="text" name="version" placeholder="2.0.7" required>
+                </div>
+                <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+                    <input type="file" id="fileInput" name="file" accept=".exe" style="display: none;" required>
+                    <p>Click to upload Vault.exe file</p>
+                    <p id="fileName" style="color: #4CAF50;"></p>
+                </div>
+                <button type="submit" class="btn btn-primary">Upload to Staging</button>
+            </form>
+        </div>
+        
+        <div class="card">
+            <h3>Staged Releases</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Version</th>
+                        <th>Filename</th>
+                        <th>Size</th>
+                        <th>Status</th>
+                        <th>Uploaded</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="releases-tbody">
+                    <tr><td colspan="6">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <script>
+            const token = localStorage.getItem('admin_token');
+            if (!token) window.location.href = '/admin';
+
+            document.getElementById('fileInput').addEventListener('change', function(e) {{
+                const fileName = e.target.files[0]?.name;
+                document.getElementById('fileName').textContent = fileName ? `Selected: ${{fileName}}` : '';
+            }});
+
+            document.getElementById('uploadForm').addEventListener('submit', async function(e) {{
+                e.preventDefault();
+                const formData = new FormData(this);
+                
+                try {{
+                    const response = await fetch('/admin/releases/upload', {{
+                        method: 'POST',
+                        headers: {{ 'Authorization': `Bearer ${{token}}` }},
+                        body: formData
+                    }});
+                    
+                    if (response.ok) {{
+                        alert('File uploaded successfully!');
+                        this.reset();
+                        document.getElementById('fileName').textContent = '';
+                        loadReleases();
+                    }} else {{
+                        alert('Upload failed!');
+                    }}
+                }} catch (error) {{
+                    console.error('Error:', error);
+                    alert('Upload error!');
+                }}
+            }});
+
+            async function loadReleases() {{
+                try {{
+                    const response = await fetch('/admin/releases/list', {{
+                        headers: {{ 'Authorization': `Bearer ${{token}}` }}
+                    }});
+                    const releases = await response.json();
+                    
+                    const tbody = document.getElementById('releases-tbody');
+                    tbody.innerHTML = releases.map(release => `
+                        <tr>
+                            <td>${{release.version}}</td>
+                            <td>${{release.filename}}</td>
+                            <td>${{(release.file_size / 1024 / 1024).toFixed(1)}} MB</td>
+                            <td><span class="badge badge-${{release.status === 'live' ? 'success' : 'warning'}}">${{release.status}}</span></td>
+                            <td>${{new Date(release.uploaded_at).toLocaleDateString()}}</td>
+                            <td>
+                                ${{release.status === 'staging' ? `<button class="btn btn-primary" onclick="activateRelease(${{release.id}})">Go Live</button>` : ''}}
+                                <button class="btn btn-danger" onclick="deleteRelease(${{release.id}})">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }} catch (error) {{
+                    console.error('Error:', error);
+                }}
+            }}
+
+            async function activateRelease(releaseId) {{
+                if (!confirm('Make this version live for all users?')) return;
+                
+                try {{
+                    await fetch(`/admin/releases/${{releaseId}}/activate`, {{
+                        method: 'POST',
+                        headers: {{ 'Authorization': `Bearer ${{token}}` }}
+                    }});
+                    loadReleases();
+                }} catch (error) {{
+                    console.error('Error:', error);
+                }}
+            }}
+
+            async function deleteRelease(releaseId) {{
+                if (!confirm('Delete this release?')) return;
+                
+                try {{
+                    await fetch(`/admin/releases/${{releaseId}}`, {{
+                        method: 'DELETE',
+                        headers: {{ 'Authorization': `Bearer ${{token}}` }}
+                    }});
+                    loadReleases();
+                }} catch (error) {{
+                    console.error('Error:', error);
+                }}
+            }}
+
+            function logout() {{
+                localStorage.removeItem('admin_token');
+                window.location.href = '/admin';
+            }}
+
+            loadReleases();
+        </script>
+    </body>
+    </html>
+    '''
+
+@app.post("/admin/releases/upload")
+async def admin_upload_release(
+    file: UploadFile = File(...),
+    version: str = Form(...),
+    admin_user: str = Depends(verify_admin_token)
+):
+    """Upload new release file"""
+    if not file.filename.endswith('.exe'):
+        raise HTTPException(status_code=400, detail="Only .exe files allowed")
+    
+    # Save file to staging
+    staging_path = f"{UPLOAD_DIR}/staging/{version}_{file.filename}"
+    os.makedirs(os.path.dirname(staging_path), exist_ok=True)
+    
+    with open(staging_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    file_size = os.path.getsize(staging_path)
+    
+    # Save to database
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    conn.execute('''
+        INSERT INTO file_releases (filename, version, file_path, file_size, status)
+        VALUES (?, ?, ?, ?, 'staging')
+    ''', (file.filename, version, staging_path, file_size))
+    conn.commit()
+    conn.close()
+    
+    return {"message": "File uploaded to staging"}
+
+@app.get("/admin/releases/list")
+async def admin_releases_list(admin_user: str = Depends(verify_admin_token)):
+    """Get releases list"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    cursor = conn.execute('''
+        SELECT id, filename, version, file_size, status, uploaded_at, activated_at
+        FROM file_releases
+        ORDER BY uploaded_at DESC
+    ''')
+    
+    releases = []
+    for row in cursor.fetchall():
+        releases.append({
+            "id": row[0],
+            "filename": row[1],
+            "version": row[2],
+            "file_size": row[3],
+            "status": row[4],
+            "uploaded_at": row[5],
+            "activated_at": row[6]
+        })
+    
+    conn.close()
+    return releases
+
+@app.post("/admin/releases/{release_id}/activate")
+async def admin_activate_release(release_id: int, admin_user: str = Depends(verify_admin_token)):
+    """Activate a staged release"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    # Get release info
+    cursor = conn.execute('SELECT file_path, filename FROM file_releases WHERE id = ?', (release_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Release not found")
+    
+    staging_path, filename = result
+    live_path = f"{UPLOAD_DIR}/current/Vault.exe"
+    
+    # Copy to live
+    shutil.copy2(staging_path, live_path)
+    
+    # Update database - deactivate old releases and activate this one
+    conn.execute('UPDATE file_releases SET status = "archived" WHERE status = "live"')
+    conn.execute('UPDATE file_releases SET status = "live", activated_at = CURRENT_TIMESTAMP WHERE id = ?', (release_id,))
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Release activated"}
+
+@app.delete("/admin/releases/{release_id}")
+async def admin_delete_release(release_id: int, admin_user: str = Depends(verify_admin_token)):
+    """Delete a release"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    # Get file path to delete
+    cursor = conn.execute('SELECT file_path FROM file_releases WHERE id = ?', (release_id,))
+    result = cursor.fetchone()
+    
+    if result:
+        try:
+            os.remove(result[0])
+        except:
+            pass  # File might not exist
+    
+    # Delete from database
+    conn.execute('DELETE FROM file_releases WHERE id = ?', (release_id,))
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Release deleted"}
+
+# ENHANCED ANALYTICS
+@app.get("/admin/analytics", response_class=HTMLResponse)
+async def admin_analytics_page():
+    """Enhanced analytics page"""
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Analytics Dashboard - TheVault Admin</title>
+        {ADMIN_STYLES}
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    </head>
+    <body>
+        <div class="header">
+            <h1>Analytics Dashboard</h1>
+            <button class="btn btn-danger" onclick="logout()">Logout</button>
+        </div>
+        
+        <div class="nav">
+            <a href="/admin/dashboard">Dashboard</a>
+            <a href="/admin/users">Users</a>
+            <a href="/admin/beta">Beta Keys</a>
+            <a href="/admin/releases">Releases</a>
+            <a href="/admin/analytics" class="active">Analytics</a>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="total-analytics-users">--</div>
+                <div class="stat-label">Total Analytics Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="active-users">--</div>
+                <div class="stat-label">Active This Week</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="avg-session">--</div>
+                <div class="stat-label">Avg Session (min)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="total-passwords">--</div>
+                <div class="stat-label">Total Passwords Stored</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>User Growth</h3>
+            <canvas id="growthChart" width="400" height="100"></canvas>
+        </div>
+        
+        <div class="card">
+            <h3>Feature Usage</h3>
+            <canvas id="featureChart" width="400" height="100"></canvas>
+        </div>
+
+        <script>
+            const token = localStorage.getItem('admin_token');
+            if (!token) window.location.href = '/admin';
+
+            async function loadAnalytics() {{
+                try {{
+                    const response = await fetch('/admin/analytics/data', {{
+                        headers: {{ 'Authorization': `Bearer ${{token}}` }}
+                    }});
+                    const data = await response.json();
+                    
+                    // Update stats
+                    document.getElementById('total-analytics-users').textContent = data.total_users;
+                    document.getElementById('active-users').textContent = data.active_users;
+                    document.getElementById('avg-session').textContent = data.avg_session;
+                    document.getElementById('total-passwords').textContent = data.total_passwords;
+                    
+                    // Update charts
+                    updateGrowthChart(data.growth_data);
+                    updateFeatureChart(data.feature_data);
+                }} catch (error) {{
+                    console.error('Error:', error);
+                }}
+            }}
+
+            function updateGrowthChart(data) {{
+                const ctx = document.getElementById('growthChart').getContext('2d');
+                new Chart(ctx, {{
+                    type: 'line',
+                    data: {{
+                        labels: data.labels,
+                        datasets: [{{
+                            label: 'New Users',
+                            data: data.values,
+                            borderColor: '#4CAF50',
+                            backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                            tension: 0.1
+                        }}]
+                    }},
+                    options: {{
+                        responsive: true,
+                        plugins: {{ legend: {{ labels: {{ color: 'white' }} }} }},
+                        scales: {{
+                            y: {{ ticks: {{ color: 'white' }}, grid: {{ color: '#444' }} }},
+                            x: {{ ticks: {{ color: 'white' }}, grid: {{ color: '#444' }} }}
+                        }}
+                    }}
+                }});
+            }}
+
+            function updateFeatureChart(data) {{
+                const ctx = document.getElementById('featureChart').getContext('2d');
+                new Chart(ctx, {{
+                    type: 'bar',
+                    data: {{
+                        labels: data.labels,
+                        datasets: [{{
+                            label: 'Usage Count',
+                            data: data.values,
+                            backgroundColor: ['#4CAF50', '#FF9800', '#2196F3', '#f44336']
+                        }}]
+                    }},
+                    options: {{
+                        responsive: true,
+                        plugins: {{ legend: {{ labels: {{ color: 'white' }} }} }},
+                        scales: {{
+                            y: {{ ticks: {{ color: 'white' }}, grid: {{ color: '#444' }} }},
+                            x: {{ ticks: {{ color: 'white' }}, grid: {{ color: '#444' }} }}
+                        }}
+                    }}
+                }});
+            }}
+
+            function logout() {{
+                localStorage.removeItem('admin_token');
+                window.location.href = '/admin';
+            }}
+
+            loadAnalytics();
+        </script>
+    </body>
+    </html>
+    '''
+
+@app.get("/admin/analytics/data")
+async def admin_analytics_data(admin_user: str = Depends(verify_admin_token)):
+    """Get enhanced analytics data"""
+    try:
+        # Get basic analytics stats
+        total_users = analytics_db.get_total_users()
+        
+        # Mock data for charts (you can implement real data later)
+        growth_data = {
+            "labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+            "values": [10, 25, 45, 60, 85, 120]
+        }
+        
+        feature_data = {
+            "labels": ["Password Copy", "Auto-fill", "Export", "Recovery"],
+            "values": [450, 320, 180, 95]
+        }
+        
+        return {
+            "total_users": total_users,
+            "active_users": 45,  # Mock data
+            "avg_session": 12.5,  # Mock data
+            "total_passwords": 2450,  # Mock data
+            "growth_data": growth_data,
+            "feature_data": feature_data
+        }
+    except Exception as e:
+        return {
+            "total_users": 0,
+            "active_users": 0,
+            "avg_session": 0,
+            "total_passwords": 0,
+            "growth_data": {"labels": [], "values": []},
+            "feature_data": {"labels": [], "values": []}
+        }
+
+@app.get("/admin/stats")
+async def admin_stats(admin_user: str = Depends(verify_admin_token)):
+    """Get admin statistics"""
+    # Get user stats
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+
+    cursor = conn.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+
+    cursor = conn.execute("SELECT COUNT(*) FROM users WHERE email_verified = TRUE")
+    verified_users = cursor.fetchone()[0]
+
+    cursor = conn.execute("SELECT COUNT(*) FROM users WHERE has_beta = TRUE")
+    beta_users_local = cursor.fetchone()[0]
+
+    conn.close()
+
+    # Get beta stats from Discord bot
+    try:
+        bot_conn = get_db_connection()
+        cursor = bot_conn.execute("SELECT COUNT(DISTINCT discord_id) FROM users")
+        result = cursor.fetchone()
+        beta_users_discord = result[0] if result else 0
+        bot_conn.close()
+    except:
+        beta_users_discord = 0
+
+    # Get analytics users
+    try:
+        analytics_users = analytics_db.get_total_users()
+    except:
+        analytics_users = 0
+
+    return {
+        "total_users": total_users,
+        "verified_users": verified_users,
+        "beta_users": beta_users_local + beta_users_discord,
+        "analytics_users": analytics_users
+    }
+
+# Download endpoint for current release
+@app.get("/download/vault.exe")
+async def download_current_release():
+    """Download current live release"""
+    live_path = f"{UPLOAD_DIR}/current/Vault.exe"
+    
+    if os.path.exists(live_path):
+        return FileResponse(
+            live_path,
+            media_type='application/octet-stream',
+            filename='Vault.exe'
+        )
+    else:
+        raise HTTPException(status_code=404, detail="No release available")
+
+# Existing Beta Key Validation Endpoint
+@app.post("/validate_key", response_model=KeyValidationResponse)
+async def validate_beta_key(request: KeyValidationRequest):
+    """Validate beta key for Vault desktop app"""
+
+    if not request.beta_key or not request.username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Beta key and username are required"
+        )
+
+    # Normalize key format
+    beta_key = request.beta_key.strip().upper().replace(" ", "-")
+
+    # Find user who owns this key
+    user = find_user_by_beta_key(beta_key)
+
+    if not user:
+        return KeyValidationResponse(
+            valid=False,
+            message="Invalid or unregistered beta key"
+        )
+
+    # Check if access is revoked
+    status = check_key_status(user['discord_id'])
+
+    if status == 'revoked':
+        return KeyValidationResponse(
+            valid=False,
+            message="Beta access has been revoked"
+        )
+
+    # Key is valid - mark as used and return success
+    mark_key_as_used(user['discord_id'], request.username)
+
+    return KeyValidationResponse(
+        valid=True,
+        message="Beta key validated successfully",
+        user_info={
+            "discord_user": user['username'],
+            "joined_at": user['joined_at'],
+            "vault_username": request.username
+        }
+    )
+
+# Existing Analytics Endpoint
+@app.post("/analytics")
+async def receive_analytics(payload: AnalyticsPayload):
+    """Receive analytics data from Vault desktop app"""
+    try:
+        analytics_data = payload.dict()
+        analytics_data["last_ping"] = datetime.now().strftime("%Y-%m-%d")
+
+        analytics_db.upsert_user_data(analytics_data)
+        return {"status": "success", "message": "Analytics received"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    print("="*50)
+    print("TheVault API Server Starting...")
+    print("Admin Login: username=admin, password=Chance19!")
+    print("CHANGE DEFAULT PASSWORDS IN PRODUCTION!")
+    print("="*50)
+
+# Service monitoring endpoints
+@app.get("/admin/services/status")
+async def services_status(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    result = get_all_services_status(cursor)
+    conn.close()
+    return result
+
+@app.post("/admin/services/restart/{service_name}")
+async def restart_service_endpoint(service_name: str, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    result, status_code = restart_service_safe(service_name)
+    return result
+
+uvicorn.run(app, host="0.0.0.0", port=8000)
+

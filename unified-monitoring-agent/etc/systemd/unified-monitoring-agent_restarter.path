@@ -1,0 +1,9 @@
+[Unit]
+Description="Monitor the /etc/unified-monitoring-agent/conf.d/ directory for changes"
+
+[Path]
+PathModified=/etc/unified-monitoring-agent/conf.d/
+MakeDirectory=True
+
+[Install]
+WantedBy=multi-user.target

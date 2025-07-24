@@ -1,0 +1,17 @@
+/.bundle/
+/.yardoc
+/_yardoc/
+/coverage/
+/doc/
+/pkg/
+/spec/reports/
+/tmp/
+
+.ruby-version
+.tool-versions
+/.byebug_history
+
+# rspec failure tracking
+.rspec_status
+.rspec-local
+

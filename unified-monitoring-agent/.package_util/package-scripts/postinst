@@ -1,0 +1,194 @@
+#! /bin/sh
+set -e
+
+echo "Running post installation script"
+
+unified_monitoring_agent_dir=/opt/unified-monitoring-agent
+
+ERROR_FLAG=0
+
+PROJECT_USER="root"
+PROJECT_GROUP="root"
+
+setup_directories() {
+    mkdir -p /var/log/unified-monitoring-agent
+    chown -R ${PROJECT_USER}:${PROJECT_GROUP} /var/log/unified-monitoring-agent/
+
+    mkdir -p /var/run/unified-monitoring-agent
+    chown -R ${PROJECT_USER}:${PROJECT_GROUP} /var/run/unified-monitoring-agent/
+
+    mkdir -p /etc/unified-monitoring-agent/plugin
+
+    mkdir -p /etc/unified-monitoring-agenttmp/
+    chmod 644 /etc/unified-monitoring-agenttmp/
+
+    # fluentd has a bug of loading plugin before changing
+    # to the right user. Then, these directories were created with root permission.
+    # The following lines fix that problem.
+    mkdir -p /var/log/unified-monitoring-agent/buffer
+    chown -R ${PROJECT_USER}:${PROJECT_GROUP} /var/log/unified-monitoring-agent/buffer/
+
+    mkdir -p /tmp/unified-monitoring-agent/
+    chown -R ${PROJECT_USER}:${PROJECT_GROUP} /tmp/unified-monitoring-agent/
+
+    if [ ! -e "/etc/unified-monitoring-agent/unified-monitoring-agent.conf" ]; then
+        echo "Installing default conffile..."
+        cp -f ${unified_monitoring_agent_dir}/etc/unified-monitoring-agent/unified-monitoring-agent.conf /etc/unified-monitoring-agent/unified-monitoring-agent.conf
+        echo "Done."
+    fi
+
+    # remove LICENSES folder
+    rm -rf "/opt/unified-monitoring-agent/LICENSES/"
+
+    # link config updater to to the embedded bin directory
+    [ -d "/opt/unified-monitoring-agent/embedded/lib/ruby/gems/3.0.0/gems/fluent-public-config-updater-2.9.24" ] && ln -sf /opt/unified-monitoring-agent/embedded/lib/ruby/gems/3.0.0/gems/fluent-public-config-updater-2.9.24/lib/*rb /opt/unified-monitoring-agent/embedded/bin
+
+    cp -f --remove-destination ${unified_monitoring_agent_dir}/etc/init.d/unified-monitoring-agent /etc/init.d/unified-monitoring-agent
+    cp -f ${unified_monitoring_agent_dir}/usr/sbin/unified-monitoring-agent /usr/sbin/unified-monitoring-agent
+    chmod 755 /usr/sbin/unified-monitoring-agent
+    cp -f ${unified_monitoring_agent_dir}/usr/sbin/unified-monitoring-agent-gem /usr/sbin/unified-monitoring-agent-gem
+    chmod 755 /usr/sbin/unified-monitoring-agent-gem
+}
+
+install_prelink() {
+    if [ -d "/etc/prelink.conf.d/" ]; then
+        echo "prelink detected. Installing /etc/prelink.conf.d/unified-monitoring-agent-ruby.conf ..."
+        cp -f ${unified_monitoring_agent_dir}/etc/prelink.conf.d/unified-monitoring-agent_prelink.conf /etc/prelink.conf.d/unified-monitoring-agent-ruby.conf
+    elif [ -f "/etc/prelink.conf" ]; then
+        if [ $(grep '\-b ${unified_monitoring_agent_dir}/embedded/bin/ruby' -c /etc/prelink.conf) -eq 0 ]; then
+            echo "prelink detected, but /etc/prelink.conf.d/ dosen't exist. Adding /etc/prelink.conf ..."
+            echo "-b ${unified_monitoring_agent_dir}/embedded/bin/ruby" >> /etc/prelink.conf
+        fi
+    fi
+}
+
+apply_hostclass_overrides() {
+    if [ -d "/lib/systemd/system/" ]; then
+        # Hostclass specific system parameter overrides
+        if [ -f /etc/hostclass ]; then
+            echo "Custom hostclass detected."
+            if grep -q "HIPPOGRIFF-IPFIX" /etc/hostclass
+            then
+                echo "Disabling CPU quota and MemoryLimit for custom hostclass."
+                sed -i '/CPUQuota/d' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent.service
+                sed -i '/MemoryLimit/d' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent.service
+            elif grep -x "LUMBERJACK-SYSLOGCANON-UNSTABLE" /etc/hostclass || grep -x "LUMBERJACK-SYSLOGCANON" /etc/hostclass
+            then
+                if [ unified-monitoring-agent = "griffin" ]; then
+                    echo "Updating CPU and Memory quota for syslogcanon hostclass"
+                    sed -i 's/CPUQuota=.*/CPUQuota=60%/' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent.service
+                    sed -i 's/MemoryLimit=.*/MemoryLimit=10240M/' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent.service
+                fi
+            elif grep -x "FAAAS-SILVER" /etc/hostclass
+            then
+                echo "Updating  Memory quota and Stop Timeout for FAAAS-SILVER hostclass"
+                sed -i 's/MemoryLimit=.*/MemoryLimit=1024M/' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent.service
+                sed -i 's/MemoryLimit=.*/MemoryLimit=120M/' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent_config_downloader.service
+                sed -i 's/TimeoutStopSec=.*/TimeoutStopSec=60/' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent.service
+            elif [ unified-monitoring-agent = "griffin" ] && ( grep -q "^EXADATACP" /etc/hostclass || grep -q "^EXACCCP" /etc/hostclass )
+            then
+                echo "Disabling CPU quota for ECRA nodes"
+                sed -i '/CPUQuota/d' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent.service
+            fi
+        fi
+        if command -v systemctl 2>&1 > /dev/null
+        then
+            SYSTEMCTL_VERSION=$(systemctl --version | head -1 | awk '{ print $2 }')
+            # MemoryLimit is deprecated in version 252 of systemd. Use MemoryMax instead.
+            if [ "$SYSTEMCTL_VERSION" -ge 252 ]; then
+            sed -i 's/MemoryLimit/MemoryMax/g' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent.service
+            sed -i 's/MemoryLimit/MemoryMax/g' ${unified_monitoring_agent_dir}/etc/systemd/unified-monitoring-agent_config_downloader.service
+            fi
+        fi
+        cp -f ${unified_monitoring_agent_dir}/etc/systemd/* /lib/systemd/system/
+
+        
+        echo "Removing unrelated systemd services..."
+        rm -f /lib/systemd/system/unified-monitoring-agent_troubleshoot.service
+        rm -f /lib/systemd/system/unified-monitoring-agent_troubleshoot.timer
+        # remove below lines after uma release
+        rm -f /lib/systemd/system/unified-monitoring-agent_mysql.service
+        rm -f /lib/systemd/system/unified-monitoring-agent_mysql.timer
+        echo "Done."
+        
+
+        chmod 644 /lib/systemd/system/unified-monitoring-agent.service
+    else
+        echo "Unsuported platform detected (neither SysVInit nor systemd). Cannot install service files."
+        ERROR_FLAG=1
+    fi
+}
+
+enable_services() {
+    if command -v systemctl 2>&1 > /dev/null
+    then
+        echo "Configure unified-monitoring-agent to start when booting up the OS..."
+        systemctl enable unified-monitoring-agent.service
+        systemctl enable unified-monitoring-agent_restarter.service
+        systemctl enable unified-monitoring-agent_restarter.path
+        systemctl enable unified-monitoring-agent_config_downloader.service
+        systemctl enable unified-monitoring-agent_config_downloader.timer
+
+        
+        systemctl daemon-reload
+
+        systemctl start unified-monitoring-agent.service
+        systemctl start unified-monitoring-agent_restarter.path
+        systemctl start unified-monitoring-agent_config_downloader.timer
+
+        
+        echo "Done."
+    elif grep -q 'VERSION="6' /etc/os-release ; then  # we support sysvinit only on OL6
+        chkconfig unified-monitoring-agent on
+        service unified-monitoring-agent start
+    fi
+}
+
+remove_old_files() {
+    rm -rf /etc/unified-monitoring-agent/last_run
+    rm -f /etc/unified-monitoring-agent/last_dry_run/fluentd.conf
+
+    if [ -f "/etc/cron.d/unified-monitoring-agent_logrotate" ]; then
+        echo "Removing /etc/cron.d/ directories for this project"
+        rm -rf /etc/cron.d/unified-monitoring-agent_logrotate
+    fi
+}
+
+case "$1" in
+    configure)
+        setup_directories
+        install_prelink
+        apply_hostclass_overrides
+        enable_services
+        remove_old_files
+        ;;
+    abort-upgrade|abort-deconfigure|abort-remove)
+        :
+        ;;
+    *)
+        echo "Called with unknown argument $1, bailing out."
+        exit 1
+        ;;
+esac
+
+
+
+if [ "$1" = "configure" ]; then
+  echo "Agent Install Complete.
+"
+fi
+
+
+# Automatically added by dh_installinit
+if [ -x "/etc/init.d/unified-monitoring-agent" ]; then
+    if [ ! -e "/etc/init/unified-monitoring-agent.conf" ]; then
+        update-rc.d unified-monitoring-agent defaults >/dev/null
+    fi
+    invoke-rc.d unified-monitoring-agent start || exit $?
+fi
+# End automatically added section
+# Automatically added by dh_makeshlibs
+if [ "$1" = "configure" ]; then
+    ldconfig
+fi
+# End automatically added section

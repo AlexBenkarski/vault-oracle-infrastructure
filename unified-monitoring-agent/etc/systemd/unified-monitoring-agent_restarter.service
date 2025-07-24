@@ -1,0 +1,9 @@
+[Unit]
+Description="Restart unified-monitoring-agent service"
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart unified-monitoring-agent
+# ExecStart=/usr/bin/systemctl reload unified-monitoring-agent
+# StartLimitInterval=60
+# StartLimitBurst=1

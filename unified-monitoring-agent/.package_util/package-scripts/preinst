@@ -1,0 +1,28 @@
+#! /bin/sh
+
+set -e
+
+echo "Running pre installation script"
+if [ -d "/etc/systemd/system/" ]
+then
+  echo "Removing systemd unit files from /etc/systemd/system/..."
+  rm -f /etc/systemd/system/unified-monitoring-agent.service
+  rm -f /etc/systemd/system/unified-monitoring-agent_restarter.service
+  rm -f /etc/systemd/system/unified-monitoring-agent_restarter.path
+  rm -f /etc/systemd/system/unified-monitoring-agent_config_downloader.service
+  rm -f /etc/systemd/system/unified-monitoring-agent_config_downloader.timer
+
+  
+  rm -f /etc/systemd/system/unified-monitoring-agent_mysql.timer
+  rm -f /etc/systemd/system/unified-monitoring-agent_mysql.service
+  rm -f /lib/systemd/system/unified-monitoring-agent_mysql.timer
+  rm -f /lib/systemd/system/unified-monitoring-agent_mysql.service
+  
+
+  
+  echo "Done."
+
+  echo "Reloading systemd daemon..."
+  systemctl daemon-reload
+  echo "Done."
+fi

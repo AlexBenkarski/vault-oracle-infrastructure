@@ -1,0 +1,112 @@
+{
+  "manifest_format": 2,
+  "software": {
+    "zlib": {
+      "locked_version": "1.3.1",
+      "locked_source": {
+        "path": "/deps/zlib-1.3.1"
+      },
+      "source_type": "path",
+      "described_version": "1.3.1",
+      "license": "Unspecified"
+    },
+    "libffi": {
+      "locked_version": "3.4.6",
+      "locked_source": {
+        "path": "/deps/libffi-3.4.6"
+      },
+      "source_type": "path",
+      "described_version": "3.4.6",
+      "license": "Unspecified"
+    },
+    "libyaml": {
+      "locked_version": "0.2.5",
+      "locked_source": {
+        "path": "/deps/yaml-0.2.5"
+      },
+      "source_type": "path",
+      "described_version": "0.2.5",
+      "license": "Unspecified"
+    },
+    "libiconv": {
+      "locked_version": "1.17",
+      "locked_source": {
+        "path": "/deps/libiconv-1.17"
+      },
+      "source_type": "path",
+      "described_version": "1.17",
+      "license": "Unspecified"
+    },
+    "ncurses": {
+      "locked_version": "6.4",
+      "locked_source": {
+        "path": "/deps/ncurses-6.4"
+      },
+      "source_type": "path",
+      "described_version": "6.4",
+      "license": "Unspecified"
+    },
+    "libedit": {
+      "locked_version": "20230828-3.1",
+      "locked_source": {
+        "path": "/deps/libedit-20230828-3.1"
+      },
+      "source_type": "path",
+      "described_version": "20230828-3.1",
+      "license": "Unspecified"
+    },
+    "jemalloc": {
+      "locked_version": "5.3.0",
+      "locked_source": {
+        "path": "/deps/jemalloc-5.3.0"
+      },
+      "source_type": "path",
+      "described_version": "5.3.0",
+      "license": "Unspecified"
+    },
+    "ruby": {
+      "locked_version": "3.0.7",
+      "locked_source": {
+        "path": "/deps/ruby-3.0.7"
+      },
+      "source_type": "path",
+      "described_version": "3.0.7",
+      "license": "Unspecified"
+    },
+    "capng_c": {
+      "locked_version": "0.2.2",
+      "locked_source": null,
+      "source_type": "project_local",
+      "described_version": "0.2.2",
+      "license": "Unspecified"
+    },
+    "fluentd_metrics_agent": {
+      "locked_version": null,
+      "locked_source": {
+        "path": "/deps/fluentd_metrics_agent"
+      },
+      "source_type": "path",
+      "described_version": null,
+      "license": "Unspecified"
+    },
+    "fluentd_public_config_updater": {
+      "locked_version": null,
+      "locked_source": {
+        "path": "/deps/fluentd_metrics_agent"
+      },
+      "source_type": "path",
+      "described_version": null,
+      "license": "Unspecified"
+    },
+    "fluentd_system_files": {
+      "locked_version": "6ed4adb6-06fc-40b0-b312-c68f732f4b29",
+      "locked_source": null,
+      "source_type": "project_local",
+      "described_version": "6ed4adb6-06fc-40b0-b312-c68f732f4b29",
+      "license": "Unspecified"
+    }
+  },
+  "build_version": "2.9.24",
+  "build_git_revision": "unknown",
+  "license": "UPL-1.0"
+}

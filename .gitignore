@@ -1,0 +1,17 @@
+*.db
+*.db-journal
+*.log
+*.pid
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+*.key
+*.crt
+*.pem
+.DS_Store
+*.tmp
+.cache/
+uploads/
+temp/

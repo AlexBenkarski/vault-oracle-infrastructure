@@ -1,0 +1,16 @@
+unified-monitoring-agent 2.9.24
+
+Component                       Installed Version                      Version GUID                      
+---------------------------------------------------------------------------------------------------------
+capng_c                         0.2.2                                  
+fluentd_metrics_agent           2.9.24                                 
+fluentd_public_config_updater   2.9.24                                 
+fluentd_system_files            6ed4adb6-06fc-40b0-b312-c68f732f4b29   
+jemalloc                        5.3.0                                  path:/deps/jemalloc-5.3.0         
+libedit                         20230828-3.1                           path:/deps/libedit-20230828-3.1   
+libffi                          3.4.6                                  path:/deps/libffi-3.4.6           
+libiconv                        1.17                                   path:/deps/libiconv-1.17          
+libyaml                         0.2.5                                  path:/deps/yaml-0.2.5             
+ncurses                         6.4                                    path:/deps/ncurses-6.4            
+ruby                            3.0.7                                  path:/deps/ruby-3.0.7             
+zlib                            1.3.1                                  path:/deps/zlib-1.3.1             

@@ -1,0 +1,7 @@
+#!/opt/unified-monitoring-agent/embedded/bin/ruby
+ENV["GEM_HOME"]="/opt/unified-monitoring-agent/embedded/lib/ruby/gems/3.0.0/"
+ENV["GEM_PATH"]="/opt/unified-monitoring-agent/embedded/lib/ruby/gems/3.0.0/"
+ENV["FLUENT_CONF"]="/etc/unified-monitoring-agent/unified-monitoring-agent.conf"
+ENV["FLUENT_PLUGIN"]="/etc/unified-monitoring-agent/plugin"
+ENV["FLUENT_SOCKET"]="/var/run/unified-monitoring-agent/unified-monitoring-agent.sock"
+load "/opt/unified-monitoring-agent/embedded/bin/fluentd"

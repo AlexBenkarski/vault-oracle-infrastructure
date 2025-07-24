@@ -1,0 +1,13 @@
+[Unit]
+Description=Run unified-monitoring-agent configuration automatic updater.
+Requires=unified-monitoring-agent_config_downloader.service
+
+[Timer]
+
+OnUnitInactiveSec=15min
+RandomizedDelaySec=600
+AccuracySec=1
+
+
+[Install]
+WantedBy=timers.target

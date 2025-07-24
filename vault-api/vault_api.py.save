@@ -1,0 +1,456 @@
+# ADD THESE IMPORTS after your existing imports:
+from fastapi import Depends, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import EmailStr
+import hashlib
+import secrets
+import jwt
+import re
+from datetime import timedelta
+
+# ADD THESE CONFIGURATIONS after your app initialization:
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://getvaultdesktop.com", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# JWT Configuration
+SECRET_KEY = "vault-secret-key-change-in-production"  # Change this!
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_HOURS = 24
+security = HTTPBearer()
+
+# ADD THESE NEW MODELS after your existing models:
+class UserSignup(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserSignin(BaseModel):
+    email: EmailStr
+    password: str
+
+# ADD THESE HELPER FUNCTIONS after your existing functions:
+def init_user_database():
+    """Initialize user authentication database"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            email_verified BOOLEAN DEFAULT TRUE,
+            verification_token TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        )
+    ''')
+    
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            email TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        )
+    ''')
+    
+    # Create default admin user (password: admin123)
+    admin_hash = hashlib.sha256("admin123".encode()).hexdigest()
+    conn.execute('''
+        INSERT OR IGNORE INTO admin_users (username, password_hash, email)
+        VALUES (?, ?, ?)
+    ''', ("admin", admin_hash, "admin@getvaultdesktop.com"))
+    
+    conn.commit()
+    conn.close()
+
+# Initialize user database
+init_user_database()
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_password(password: str, hashed: str) -> bool:
+    return hashlib.sha256(password.encode()).hexdigest() == hashed
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return email
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def verify_admin_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        role = payload.get("role")
+        if username is None or role != "admin":
+            raise HTTPException(status_code=401, detail="Admin access required")
+        return username
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+def is_valid_email(email: str) -> bool:
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+# ADD THESE NEW ENDPOINTS before your existing endpoints:
+
+# User Authentication
+@app.post("/auth/signup")
+async def signup(user: UserSignup):
+    """Register new user account"""
+    if not is_valid_email(user.email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+    
+    if len(user.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    # Check if user exists
+    cursor = conn.execute("SELECT email FROM users WHERE email = ?", (user.email,))
+    if cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Create user
+    password_hash = hash_password(user.password)
+    
+    conn.execute('''
+        INSERT INTO users (email, password_hash, email_verified)
+        VALUES (?, ?, ?)
+    ''', (user.email, password_hash, True))  # Auto-verify for now
+    
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Account created successfully!"}
+
+@app.post("/auth/signin")
+async def signin(user: UserSignin):
+    """Sign in user"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    cursor = conn.execute('''
+        SELECT email, password_hash, email_verified 
+        FROM users WHERE email = ?
+    ''', (user.email,))
+    
+    result = cursor.fetchone()
+    conn.close()
+    
+    if not result or not verify_password(user.password, result[1]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    if not result[2]:  # email_verified
+        raise HTTPException(status_code=401, detail="Please verify your email first")
+    
+    # Update last login
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    conn.execute('''
+        UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE email = ?
+    ''', (user.email,))
+    conn.commit()
+    conn.close()
+    
+    # Create JWT token
+    token = create_access_token({"sub": user.email})
+    
+    return {"token": token, "message": "Sign in successful"}
+
+# Admin Authentication
+@app.post("/admin/auth")
+async def admin_login(username: str = Form(), password: str = Form()):
+    """Admin login"""
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    cursor = conn.execute('''
+        SELECT username, password_hash FROM admin_users WHERE username = ?
+    ''', (username,))
+    
+    result = cursor.fetchone()
+    conn.close()
+    
+    if not result or not verify_password(password, result[1]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Update last login
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    conn.execute('''
+        UPDATE admin_users SET last_login = CURRENT_TIMESTAMP WHERE username = ?
+    ''', (username,))
+    conn.commit()
+    conn.close()
+    
+    # Create admin token
+    token = create_access_token({"sub": username, "role": "admin"})
+    
+    return {"token": token, "message": "Admin login successful"}
+
+# Admin Pages
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_login_page():
+    """Admin login page"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Admin Login - TheVault</title>
+        <style>
+            body { 
+                font-family: 'Segoe UI', sans-serif; 
+                background: #1a1a1d; 
+                color: white; 
+                display: flex; 
+                justify-content: center; 
+                align-items: center; 
+                height: 100vh; 
+                margin: 0; 
+            }
+            .login-box { 
+                background: #2d2d30; 
+                padding: 40px; 
+                border-radius: 12px; 
+                border: 2px solid #4CAF50; 
+                width: 300px; 
+            }
+            h2 { color: #4CAF50; text-align: center; margin-bottom: 30px; }
+            input { 
+                width: 100%; 
+                padding: 12px; 
+                margin: 10px 0; 
+                background: rgba(255,255,255,0.1); 
+                border: 1px solid rgba(255,255,255,0.3); 
+                border-radius: 6px; 
+                color: white; 
+                box-sizing: border-box;
+            }
+            button { 
+                width: 100%; 
+                padding: 12px; 
+                background: #4CAF50; 
+                color: white; 
+                border: none; 
+                border-radius: 6px; 
+                font-weight: bold; 
+                cursor: pointer; 
+            }
+            button:hover { background: #45a049; }
+            .error { color: #ff4757; margin-top: 10px; text-align: center; }
+        </style>
+    </head>
+    <body>
+        <div class="login-box">
+            <h2>Admin Login</h2>
+            <form id="adminForm">
+                <input type="text" name="username" placeholder="Username" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Login</button>
+                <div id="error" class="error"></div>
+            </form>
+        </div>
+        
+        <script>
+            document.getElementById('adminForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const formData = new FormData(this);
+                
+                try {
+                    const response = await fetch('/admin/auth', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        localStorage.setItem('admin_token', data.token);
+                        window.location.href = '/admin/dashboard';
+                    } else {
+                        document.getElementById('error').textContent = data.detail;
+                    }
+                } catch (error) {
+                    document.getElementById('error').textContent = 'Network error';
+                }
+            });
+        </script>
+    </body>
+    </html>
+    '''
+
+@app.get("/admin/dashboard", response_class=HTMLResponse)
+async def admin_dashboard():
+    """Admin dashboard"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Admin Dashboard - TheVault</title>
+        <style>
+            body { 
+                font-family: 'Segoe UI', sans-serif; 
+                background: #1a1a1d; 
+                color: white; 
+                margin: 0; 
+                padding: 20px; 
+            }
+            .header { 
+                background: #2d2d30; 
+                padding: 20px; 
+                border-radius: 8px; 
+                margin-bottom: 20px; 
+                border: 1px solid #4CAF50; 
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .stats { 
+                display: grid; 
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+                gap: 20px; 
+                margin-bottom: 20px; 
+            }
+            .stat-card { 
+                background: #2d2d30; 
+                padding: 20px; 
+                border-radius: 8px; 
+                border: 1px solid rgba(76, 175, 80, 0.3); 
+                text-align: center; 
+            }
+            .stat-number { 
+                font-size: 2rem; 
+                color: #4CAF50; 
+                font-weight: bold; 
+            }
+            .stat-label { 
+                color: #a0a0a0; 
+                text-transform: uppercase; 
+                letter-spacing: 1px; 
+                font-size: 0.9rem;
+            }
+            .logout { 
+                background: #ff4757; 
+                color: white; 
+                padding: 8px 16px; 
+                border: none; 
+                border-radius: 4px; 
+                cursor: pointer; 
+            }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>Admin Dashboard</h1>
+            <button class="logout" onclick="logout()">Logout</button>
+        </div>
+        
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="total-users">--</div>
+                <div class="stat-label">Total Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="verified-users">--</div>
+                <div class="stat-label">Verified Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="beta-users">--</div>
+                <div class="stat-label">Beta Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="analytics-users">--</div>
+                <div class="stat-label">Analytics Users</div>
+            </div>
+        </div>
+        
+        <script>
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                window.location.href = '/admin';
+            }
+            
+            async function loadStats() {
+                try {
+                    const response = await fetch('/admin/stats', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    
+                    if (response.ok) {
+                        const stats = await response.json();
+                        document.getElementById('total-users').textContent = stats.total_users;
+                        document.getElementById('verified-users').textContent = stats.verified_users;
+                        document.getElementById('beta-users').textContent = stats.beta_users;
+                        document.getElementById('analytics-users').textContent = stats.analytics_users;
+                    } else {
+                        window.location.href = '/admin';
+                    }
+                } catch (error) {
+                    console.error('Error loading stats:', error);
+                }
+            }
+            
+            function logout() {
+                localStorage.removeItem('admin_token');
+                window.location.href = '/admin';
+            }
+            
+            loadStats();
+            setInterval(loadStats, 30000);
+        </script>
+    </body>
+    </html>
+    '''
+
+@app.get("/admin/stats")
+async def admin_stats(admin_user: str = Depends(verify_admin_token)):
+    """Get admin statistics"""
+    # Get user stats
+    conn = sqlite3.connect('/opt/vault-api/users.db')
+    
+    cursor = conn.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
+    cursor = conn.execute("SELECT COUNT(*) FROM users WHERE email_verified = TRUE")
+    verified_users = cursor.fetchone()[0]
+    
+    conn.close()
+    
+    # Get beta stats from Discord bot
+    try:
+        bot_conn = get_db_connection()
+        cursor = bot_conn.execute("SELECT COUNT(DISTINCT discord_id) FROM users")
+        beta_users = cursor.fetchone()[0] if cursor.fetchone() else 0
+        bot_conn.close()
+    except:
+        beta_users = 0
+    
+    # Get analytics users
+    try:
+        analytics_users = analytics_db.get_total_users()
+    except:
+        analytics_users = 0
+    
+    return {
+        "total_users": total_users,
+        "verified_users": verified_users,
+        "beta_users": beta_users,
+        "analytics_users": analytics_users
+    }

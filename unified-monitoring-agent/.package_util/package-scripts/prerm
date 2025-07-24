@@ -1,0 +1,82 @@
+#!/bin/sh
+
+set -e
+
+echo "Running pre uninstallation script"
+
+if [ "$1" = "upgrade" ]; then
+    echo "Upgrade detected: systemd/init.d unit files for unified-monitoring-agent will not be removed."
+    exit 0
+fi
+
+if command -v systemctl 2>&1 > /dev/null
+then
+    # these commands failing have no side-effects
+    echo "Resetting unified-monitoring-agent related services if they were in failed state..."
+    systemctl reset-failed unified-monitoring-agent.service || true
+    systemctl reset-failed unified-monitoring-agent_restarter.service || true
+    systemctl reset-failed unified-monitoring-agent_restarter.path || true
+    systemctl reset-failed unified-monitoring-agent_config_downloader.service || true
+    systemctl reset-failed unified-monitoring-agent_config_downloader.timer || true
+    echo "Done."
+
+    echo "Stopping unified-monitoring-agent related services..."
+    systemctl stop unified-monitoring-agent.service
+    systemctl stop unified-monitoring-agent_restarter.service
+    systemctl stop unified-monitoring-agent_restarter.path
+    systemctl stop unified-monitoring-agent_config_downloader.service
+    systemctl stop unified-monitoring-agent_config_downloader.timer
+    echo "Done."
+
+    echo "Disabling unified-monitoring-agent related services..."
+    systemctl disable unified-monitoring-agent.service
+    systemctl disable unified-monitoring-agent_restarter.service
+    systemctl disable unified-monitoring-agent_restarter.path
+    systemctl disable unified-monitoring-agent_config_downloader.service
+    systemctl disable unified-monitoring-agent_config_downloader.timer
+    echo "Done."
+
+    echo "Removing systemd unit files from /lib/systemd/system/..."
+    rm -f /lib/systemd/system/unified-monitoring-agent.service
+    rm -f /lib/systemd/system/unified-monitoring-agent_restarter.service
+    rm -f /lib/systemd/system/unified-monitoring-agent_restarter.path
+    rm -f /lib/systemd/system/unified-monitoring-agent_config_downloader.service
+    rm -f /lib/systemd/system/unified-monitoring-agent_config_downloader.timer
+    echo "Done."
+
+    echo "Removing systemd unit files from /etc/systemd/system/..."
+    rm -f /etc/systemd/system/unified-monitoring-agent.service
+    rm -f /etc/systemd/system/unified-monitoring-agent_restarter.service
+    rm -f /etc/systemd/system/unified-monitoring-agent_restarter.path
+    rm -f /etc/systemd/system/unified-monitoring-agent_config_downloader.service
+    rm -f /etc/systemd/system/unified-monitoring-agent_config_downloader.timer
+    echo "Done."
+
+    if [ unified-monitoring-agent = "griffin" ]
+    then
+        echo "cleaning griffin troubleshoot related systemd services"
+        systemctl reset-failed griffin_troubleshoot.service || true
+        systemctl reset-failed griffin_troubleshoot.timer || true
+        systemctl stop griffin_troubleshoot.service
+        systemctl stop griffin_troubleshoot.timer
+        systemctl disable griffin_troubleshoot.service
+        systemctl disable griffin_troubleshoot.timer
+        rm -f /lib/systemd/system/griffin_troubleshoot.service
+        rm -f /lib/systemd/system/griffin_troubleshoot.timer
+        rm -f /etc/systemd/system/griffin_troubleshoot.service
+        rm -f /etc/systemd/system/griffin_troubleshoot.timer
+        rm -f /etc/griffin/griffin_doctor.sh
+        echo "Done."
+    fi
+
+    echo "Reloading systemd daemon..."
+    systemctl daemon-reload
+    echo "Done."
+fi
+
+if [ -x "/etc/init.d/unified-monitoring-agent" ]; then
+    invoke-rc.d unified-monitoring-agent stop || exit $?
+    rm -f /etc/init.d/unified-monitoring-agent
+    rm -f /usr/sbin/unified-monitoring-agent
+    update-rc.d unified-monitoring-agent remove > /dev/null
+fi

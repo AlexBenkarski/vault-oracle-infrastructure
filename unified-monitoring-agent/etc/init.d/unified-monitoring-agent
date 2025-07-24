@@ -1,0 +1,365 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          unified-monitoring-agent
+# Required-Start:    $network $local_fs
+# Required-Stop:     $network $local_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Oracle Unified Agent fluentd distribution
+# Description:       unified-monitoring-agent is a fluentd based logs and metrics agents
+### END INIT INFO
+
+
+export PATH=/sbin:/usr/sbin:/bin:/usr/bin
+
+AGENT_NAME=unified-monitoring-agent
+AGENT_HOME=/opt/unified-monitoring-agent
+AGENT_DEFAULT=/etc/sysconfig/unified-monitoring-agent
+AGENT_USER=unified-monitoring-agent
+AGENT_GROUP=unified-monitoring-agent
+AGENT_RUBY=/opt/unified-monitoring-agent/embedded/bin/ruby
+AGENT_BIN_FILE=/usr/sbin/unified-monitoring-agent
+AGENT_LOG_FILE=/var/log/unified-monitoring-agent/unified-monitoring-agent.log
+AGENT_PID_FILE=/var/run/unified-monitoring-agent/unified-monitoring-agent.pid
+AGENT_LOCK_FILE=/var/lock/subsys/unified-monitoring-agent
+AGENT_OPTIONS="--use-v1-config"
+
+# timeout can be overridden from /etc/sysconfig/unified-monitoring-agent
+STOPTIMEOUT=120
+
+# Read configuration variable file if it is present
+if [ -f "${AGENT_DEFAULT}" ]; then
+  . "${AGENT_DEFAULT}"
+fi
+
+if [ -n "${name}" ]; then
+  # backward compatibility
+  echo "Warning: Declaring \$name in ${AGENT_DEFAULT} has been deprecated. Use \$AGENT_NAME instead." 1>&2
+  AGENT_NAME="${name}"
+fi
+
+if [ -n "${prog}" ]; then
+  # backward compatibility
+  echo "Warning: Declaring \$prog in ${AGENT_DEFAULT} for customizing \$PIDFILE has been deprecated. Use \$AGENT_PID_FILE instead." 1>&2
+  if [ -z "${PIDFILE}" ]; then
+    AGENT_PID_FILE="//var/run/unified-monitoring-agent/${prog}.pid"
+  fi
+  AGENT_LOCK_FILE="//var/lock/subsys/${prog}"
+  AGENT_PROG_NAME="${prog}"
+else
+  unset AGENT_PROG_NAME
+fi
+
+if [ -n "${process_bin}" ]; then
+  # backward compatibility
+  echo "Warning: Declaring \$process_bin in ${AGENT_DEFAULT} has been deprecated. Use \$AGENT_RUBY instead." 1>&2
+  AGENT_RUBY="${process_bin}"
+fi
+
+if [ -n "${PIDFILE}" ]; then
+  echo "Warning: Declaring \$PIDFILE in ${AGENT_DEFAULT} has been deprecated. Use \$AGENT_PIDFILE instead." 1>&2
+  AGENT_PID_FILE="${PIDFILE}"
+fi
+
+if [ -n "${DAEMON_ARGS}" ]; then
+  START_STOP_DAEMON_ARGS=""
+  parse_daemon_args() {
+    while [ -n "$1" ]; do
+      case "$1" in
+      "--user="?* )
+        echo "Warning: Declaring --user in \$DAEMON_ARGS has been deprecated. Use \$AGENT_USER instead." 1>&2
+        AGENT_USER="${1#*=}"
+        ;;
+      "--user" )
+        echo "Warning: Declaring --user in \$DAEMON_ARGS has been deprecated. Use \$AGENT_USER instead." 1>&2
+        shift 1
+        AGENT_USER="$1"
+        ;;
+      * )
+        START_STOP_DAEMON_ARGS="${START_STOP_DAEMON_ARGS} $1"
+        ;;
+      esac
+      shift 1
+    done
+  }
+  parse_daemon_args ${DAEMON_ARGS}
+fi
+
+if [ -n "${AGENT_ARGS}" ]; then
+  ORIG_AGENT_ARGS="${AGENT_ARGS}"
+  AGENT_ARGS=""
+  parse_agent_args() {
+    while [ -n "$1" ]; do
+      case "$1" in
+      "--group="?* )
+        echo "Warning: Declaring --group in \$AGENT_ARGS has been deprecated. Use \$AGENT_GROUP instead." 1>&2
+        AGENT_GROUP="${1#*=}"
+        ;;
+      "--group" )
+        echo "Warning: Declaring --group in \$AGENT_ARGS has been deprecated. Use \$AGENT_GROUP instead." 1>&2
+        shift 1
+        AGENT_GROUP="$1"
+        ;;
+      "--user="?* )
+        echo "Warning: Declaring --user in \$AGENT_ARGS has been deprecated. Use \$AGENT_USER instead." 1>&2
+        AGENT_USER="${1#*=}"
+        ;;
+      "--user" )
+        echo "Warning: Declaring --user in \$AGENT_ARGS has been deprecated. Use \$AGENT_USER instead." 1>&2
+        shift 1
+        AGENT_USER="$1"
+        ;;
+      * )
+        AGENT_ARGS="${AGENT_ARGS} $1"
+        ;;
+      esac
+      shift 1
+    done
+  }
+  parse_agent_args ${ORIG_AGENT_ARGS}
+fi
+
+# Arguments to run the daemon with
+AGENT_ARGS="${AGENT_ARGS:-${AGENT_BIN_FILE} --log ${AGENT_LOG_FILE} ${AGENT_OPTIONS}}"
+START_STOP_DAEMON_ARGS="${START_STOP_DAEMON_ARGS}"
+
+# Exit if the package is not installed
+[ -x "${AGENT_RUBY}" ] || exit 0
+
+# Source function library.
+. /etc/init.d/functions
+
+# Check log_* functions definitions existence.
+if [ -f /lib/lsb/init-functions ]; then
+  # Depend on lsb-base (>= 3.0-6) to use original implementation
+  . /lib/lsb/init-functions
+else
+  killproc() {
+    LSB=LSB-1.1 killproc $*
+  }
+
+  log_success_msg() {
+    echo -n "$*"
+    $MOVE_TO_COL
+    echo -ne "[  OK  ]\r"
+    echo
+  }
+
+  log_failure_msg() {
+    echo -n "$*"
+    $MOVE_TO_COL
+    echo -ne "[FAILED]\r"
+    echo
+  }
+fi
+
+# Check the user
+if [ -n "${AGENT_USER}" ]; then
+  if ! getent passwd "${AGENT_USER}" > /dev/null 2>&1; then
+    echo "$0: user for running ${AGENT_NAME} doesn't exist: ${AGENT_USER}" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "${AGENT_PID_FILE}")"
+  chown -R "${AGENT_USER}" "$(dirname "${AGENT_PID_FILE}")"
+  START_STOP_DAEMON_ARGS="${START_STOP_DAEMON_ARGS} --user ${AGENT_USER}"
+fi
+
+if [ -n "${AGENT_GROUP}" ]; then
+  if ! getent group -s files "${AGENT_GROUP}" > /dev/null 2>&1; then
+    echo "$0: group for running ${AGENT_NAME} doesn't exist: ${AGENT_GROUP}" >&2
+    exit 1
+  fi
+  AGENT_ARGS="${AGENT_ARGS} --group ${AGENT_GROUP}"
+fi
+
+if [ -n "${AGENT_PID_FILE}" ]; then
+  mkdir -p "$(dirname "${AGENT_PID_FILE}")"
+  chown -R "${AGENT_USER}" "$(dirname "${AGENT_PID_FILE}")"
+  AGENT_ARGS="${AGENT_ARGS} --daemon ${AGENT_PID_FILE}"
+fi
+
+# Use jemalloc to avoid memory fragmentation
+if [ -f "${AGENT_HOME}/embedded/lib/libjemalloc.so" ]; then
+  export LD_PRELOAD="${AGENT_HOME}/embedded/lib/libjemalloc.so"
+fi
+
+kill_by_file() {
+  local sig="$1"
+  shift 1
+  local pid="$(cat "$@" 2>/dev/null || true)"
+  if [ -n "${pid}" ]; then
+    if /bin/kill "${sig}" "${pid}" 1>/dev/null 2>&1; then
+      return 0
+    else
+      return 2
+    fi
+  else
+    return 1
+  fi
+}
+
+#
+# Function that starts the daemon/service
+#
+do_start() {
+  # Set Max number of file descriptors for the safety sake
+  # see http://docs.fluentd.org/en/articles/before-install
+  ulimit -n 65536 1>/dev/null 2>&1 || true
+  local RETVAL=0
+  daemon --pidfile="${AGENT_PID_FILE}" ${START_STOP_DAEMON_ARGS} "${AGENT_RUBY}" ${AGENT_ARGS} || RETVAL="$?"
+  [ $RETVAL -eq 0 ] && touch "${AGENT_LOCK_FILE}"
+  return $RETVAL
+}
+
+#
+# Function that stops the daemon/service
+#
+do_stop() {
+  # Return
+  #   0 if daemon has been stopped
+  #   1 if daemon was already stopped
+  #   2 if daemon could not be stopped
+  #   other if a failure occurred
+  if [ -e "${AGENT_PID_FILE}" ]; then
+    # Use own process termination instead of killproc because killproc can't wait SIGTERM
+    if kill_by_file -TERM "${AGENT_PID_FILE}"; then
+      local i
+      for i in $(seq "${STOPTIMEOUT}"); do
+        if kill_by_file -0 "${AGENT_PID_FILE}"; then
+          sleep 1
+        else
+          break
+        fi
+      done
+      if kill_by_file -0 "${AGENT_PID_FILE}"; then
+        echo -n "Timeout error occurred trying to stop ${AGENT_NAME}..."
+        return 2
+      else
+        rm -f "${AGENT_PID_FILE}"
+        rm -f "${AGENT_LOCK_FILE}"
+      fi
+    else
+      return 1
+    fi
+  else
+    if kill_by_file -0 "${AGENT_PID_FILE}"; then
+      killproc "${AGENT_PROG_NAME:-${AGENT_NAME}}"
+      rm -f "${AGENT_PID_FILE}"
+      rm -f "${AGENT_LOCK_FILE}"
+    else
+      return 1
+    fi
+  fi
+}
+
+#
+# Function that sends a SIGHUP to the daemon/service
+#
+do_reload() {
+  kill_by_file -HUP "${AGENT_PID_FILE}"
+}
+
+do_restart() {
+  if ! do_configtest; then
+    return 1
+  fi
+  local val=0
+  do_stop || val="$?"
+  case "${val}" in
+  0 | 1 )
+    if ! do_start; then
+      return 1
+    fi
+    ;;
+  * ) # Failed to stop
+    return 1
+    ;;
+  esac
+}
+
+do_configtest() {
+  eval "${AGENT_ARGS} ${START_STOP_DAEMON_ARGS} --dry-run -q"
+}
+
+RETVAL=0
+case "$1" in
+"start" )
+  echo -n "Starting ${AGENT_NAME}: "
+  do_start || RETVAL="$?"
+  case "$RETVAL" in
+  0 | 1 )
+    log_success_msg "${AGENT_NAME}"
+    ;;
+  * )
+    log_failure_msg "${AGENT_NAME}"
+    exit 1
+    ;;
+  esac
+  ;;
+"stop" )
+  echo -n "Stopping ${AGENT_NAME}: "
+  do_stop || RETVAL="$?"
+  case "$RETVAL" in
+  0 )
+    log_success_msg "${AGENT_NAME}"
+    ;;
+  * )
+    log_failure_msg "${AGENT_NAME}"
+    exit 1
+    ;;
+  esac
+  ;;
+"reload" )
+  echo -n "Reloading ${AGENT_NAME}: "
+  if ! do_configtest; then
+    log_failure_msg "${AGENT_NAME}"
+    exit 1
+  fi
+  if do_reload; then
+    log_success_msg "${AGENT_NAME}"
+  else
+    log_failure_msg "${AGENT_NAME}"
+    exit 1
+  fi
+  ;;
+"restart" )
+  echo -n "Restarting ${AGENT_NAME}: "
+  if do_restart; then
+    log_success_msg "${AGENT_NAME}"
+  else
+    log_failure_msg "${AGENT_NAME}"
+    exit 1
+  fi
+  ;;
+"status" )
+  if kill_by_file -0 "${AGENT_PID_FILE}"; then
+    log_success_msg "${AGENT_NAME} is running"
+  else
+    log_failure_msg "${AGENT_NAME} is not running"
+    exit 1
+  fi
+  ;;
+"condrestart" )
+  if [ -f "${AGENT_LOCK_FILE}" ]; then
+    echo -n "Restarting ${AGENT_NAME}: "
+    if do_restart; then
+      log_success_msg "${AGENT_NAME}"
+    else
+      log_failure_msg "${AGENT_NAME}"
+      exit 1
+    fi
+  fi
+  ;;
+"configtest" )
+  if do_configtest; then
+    log_success_msg "${AGENT_NAME}"
+  else
+    log_failure_msg "${AGENT_NAME}"
+    exit 1
+  fi
+  ;;
+* )
+  echo "Usage: $0 {start|stop|reload|restart|condrestart|status|configtest}" >&2
+  exit 1
+  ;;
+esac
