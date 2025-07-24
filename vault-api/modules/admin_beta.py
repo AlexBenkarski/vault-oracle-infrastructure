@@ -4,7 +4,8 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 from admin_styles import ADMIN_STYLES, get_nav_html, LOGOUT_SCRIPT
 
-router = APIRouter(prefix="", tags=["admin-beta"])
+# Remove the prefix since it's already included by admin_pages.py
+router = APIRouter(tags=["admin-beta"])
 
 @router.get("/beta", response_class=HTMLResponse)
 async def admin_beta_page():
@@ -12,7 +13,7 @@ async def admin_beta_page():
     return ADMIN_STYLES + f'''
     <div class="container">
         <div class="header">
-            <h1>🔑 Beta Key Management</h1>
+            <h1>Beta Key Management</h1>
             <button class="btn btn-danger" onclick="logout()">Logout</button>
         </div>
         
@@ -47,24 +48,38 @@ async def admin_beta_page():
                 const response = await fetch('/admin/beta/generate', {{
                     method: 'POST',
                     headers: {{
-                        'Authorization': `Bearer ${{token}}`
+                        'Authorization': `Bearer ${{token}}`,
+                        'Content-Type': 'application/json'
                     }}
                 }});
 
                 if (response.ok) {{
                     const result = await response.json();
-                    document.getElementById('generated-key').innerHTML = 
-                        `<strong>New Beta Key:</strong> ${{result.beta_key}}`;
-                    refreshBetaKeys(); // Refresh the list
+                    document.getElementById('generated-key').innerHTML = `
+                        <div style="background: #2d2d2d; padding: 15px; border-radius: 5px; margin-top: 10px;">
+                            <strong>New Beta Key:</strong><br>
+                            <code style="font-size: 18px; color: #4CAF50;">${{result.key}}</code>
+                            <br><br>
+                            <button class="btn btn-secondary" onclick="copyToClipboard('${{result.key}}')">Copy to Clipboard</button>
+                        </div>
+                    `;
+                    // Refresh the keys list
+                    refreshBetaKeys();
                 }} else {{
                     const error = await response.json();
-                    document.getElementById('generated-key').innerHTML = 
-                        `<span style="color: #f44336;">Error: ${{error.detail}}</span>`;
+                    document.getElementById('generated-key').innerHTML = `
+                        <div style="color: #f44336; margin-top: 10px;">
+                            Error: ${{error.detail || 'Failed to generate key'}}
+                        </div>
+                    `;
                 }}
             }} catch (error) {{
                 console.error('Error generating beta key:', error);
-                document.getElementById('generated-key').innerHTML = 
-                    '<span style="color: #f44336;">Failed to generate beta key</span>';
+                document.getElementById('generated-key').innerHTML = `
+                    <div style="color: #f44336; margin-top: 10px;">
+                        Error: Network error occurred
+                    </div>
+                `;
             }}
         }}
 
@@ -111,28 +126,83 @@ async def admin_beta_page():
                             <th style="padding: 12px; text-align: left;">Status</th>
                             <th style="padding: 12px; text-align: left;">Used By</th>
                             <th style="padding: 12px; text-align: left;">Created</th>
+                            <th style="padding: 12px; text-align: left;">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
             `;
 
             keys.forEach(key => {{
+                const createdDate = key.created_at ? new Date(key.created_at).toLocaleDateString() : 'Unknown';
+                const usedBy = key.used_by_email || 'None';
+                const statusColor = key.status === 'used' ? '#ff9800' : key.status === 'revoked' ? '#f44336' : '#4CAF50';
+                
                 html += `
                     <tr style="border-bottom: 1px solid #333;">
-                        <td style="padding: 12px; font-family: monospace;">${{key.beta_key}}</td>
+                        <td style="padding: 12px; font-family: monospace;">
+                            <code>${{key.key_value}}</code>
+                            <button onclick="copyToClipboard('${{key.key_value}}')" style="margin-left: 10px; padding: 2px 8px; font-size: 12px;">Copy</button>
+                        </td>
                         <td style="padding: 12px;">
-                            <span style="color: ${{key.is_used ? '#ff9800' : '#4CAF50'}};">
-                                ${{key.is_used ? 'Used' : 'Available'}}
+                            <span style="color: ${{statusColor}}; text-transform: capitalize;">
+                                ${{key.status}}
                             </span>
                         </td>
-                        <td style="padding: 12px;">${{key.used_by || 'None'}}</td>
-                        <td style="padding: 12px;">${{key.created_at}}</td>
+                        <td style="padding: 12px;">${{usedBy}}</td>
+                        <td style="padding: 12px;">${{createdDate}}</td>
+                        <td style="padding: 12px;">
+                            ${{key.status !== 'revoked' ? `<button class="btn btn-danger" onclick="revokeKey('${{key.key_value}}')" style="padding: 4px 8px; font-size: 12px;">Revoke</button>` : ''}}
+                        </td>
                     </tr>
                 `;
             }});
 
             html += '</tbody></table>';
             document.getElementById('beta-keys-table').innerHTML = html;
+        }}
+
+        function copyToClipboard(text) {{
+            navigator.clipboard.writeText(text).then(function() {{
+                // Show temporary success message
+                const originalText = event.target.textContent;
+                event.target.textContent = 'Copied!';
+                event.target.style.color = '#4CAF50';
+                setTimeout(() => {{
+                    event.target.textContent = originalText;
+                    event.target.style.color = '';
+                }}, 1000);
+            }}).catch(function(err) {{
+                console.error('Could not copy text: ', err);
+                alert('Failed to copy to clipboard');
+            }});
+        }}
+
+        async function revokeKey(keyValue) {{
+            if (!confirm(`Are you sure you want to revoke key: ${{keyValue}}?`)) {{
+                return;
+            }}
+
+            try {{
+                const token = localStorage.getItem('admin_token');
+                const response = await fetch('/admin/beta/revoke', {{
+                    method: 'POST',
+                    headers: {{
+                        'Authorization': `Bearer ${{token}}`,
+                        'Content-Type': 'application/json'
+                    }},
+                    body: JSON.stringify({{ key_value: keyValue }})
+                }});
+
+                if (response.ok) {{
+                    alert('Key revoked successfully');
+                    refreshBetaKeys();
+                }} else {{
+                    alert('Failed to revoke key');
+                }}
+            }} catch (error) {{
+                console.error('Error revoking key:', error);
+                alert('Error revoking key');
+            }}
         }}
 
         // Load beta keys on page load
