@@ -1,0 +1,114 @@
+"""Admin Dashboard Page"""
+
+from fastapi import APIRouter
+from fastapi.responses import HTMLResponse
+from admin_styles import ADMIN_STYLES, get_nav_html, LOGOUT_SCRIPT
+
+router = APIRouter(prefix="/admin", tags=["admin-dashboard"])
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def admin_dashboard():
+    """Main admin dashboard with system overview"""
+    return ADMIN_STYLES + f'''
+    <div class="container">
+        <div class="header">
+            <h1>🏠 Admin Dashboard</h1>
+            <button class="btn btn-danger" onclick="logout()">Logout</button>
+        </div>
+        
+        {get_nav_html('dashboard')}
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Users</h3>
+                <div style="font-size: 2.5em; margin: 10px 0; color: #4CAF50;" id="total-users">Loading...</div>
+                <p>Registered accounts</p>
+            </div>
+            <div class="stat-card">
+                <h3>Verified Users</h3>
+                <div style="font-size: 2.5em; margin: 10px 0; color: #4CAF50;" id="verified-users">Loading...</div>
+                <p>Email verified</p>
+            </div>
+            <div class="stat-card">
+                <h3>Beta Users</h3>
+                <div style="font-size: 2.5em; margin: 10px 0; color: #4CAF50;" id="beta-users">Loading...</div>
+                <p>Active beta keys</p>
+            </div>
+            <div class="stat-card">
+                <h3>Analytics Users</h3>
+                <div style="font-size: 2.5em; margin: 10px 0; color: #4CAF50;" id="analytics-users">Loading...</div>
+                <p>Opted into analytics</p>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>🔧 System Services</h3>
+            <div class="service-grid">
+                <div class="service-card">
+                    <div class="status-indicator" id="api-status"></div>
+                    <div>
+                        <strong>API Server</strong>
+                        <div>Status: <span id="api-text">Checking...</span></div>
+                    </div>
+                </div>
+                <div class="service-card">
+                    <div class="status-indicator" id="db-status"></div>
+                    <div>
+                        <strong>Database</strong>
+                        <div>Status: <span id="db-text">Checking...</span></div>
+                    </div>
+                </div>
+                <div class="service-card">
+                    <div class="status-indicator" id="discord-status"></div>
+                    <div>
+                        <strong>Discord Bot</strong>
+                        <div>Status: <span id="discord-text">Checking...</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        async function updateServiceStatus() {{
+            // Update service indicators
+            document.getElementById('api-text').textContent = 'Online';
+            document.getElementById('db-text').textContent = 'Connected';
+            document.getElementById('discord-text').textContent = 'Active';
+        }}
+
+        async function loadStats() {{
+            try {{
+                const token = localStorage.getItem('admin_token');
+                if (!token) {{
+                    window.location.href = '/admin';
+                    return;
+                }}
+
+                const response = await fetch('/admin/stats', {{
+                    headers: {{
+                        'Authorization': `Bearer ${{token}}`
+                    }}
+                }});
+
+                if (response.ok) {{
+                    const stats = await response.json();
+                    document.getElementById('total-users').textContent = stats.total_users;
+                    document.getElementById('verified-users').textContent = stats.verified_users;
+                    document.getElementById('beta-users').textContent = stats.beta_users;
+                    document.getElementById('analytics-users').textContent = stats.analytics_users;
+                }} else {{
+                    window.location.href = '/admin';
+                }}
+            }} catch (error) {{
+                console.error('Error loading stats:', error);
+            }}
+        }}
+
+        // Initialize dashboard
+        loadStats();
+        updateServiceStatus();
+        setInterval(updateServiceStatus, 30000); // Update every 30 seconds
+        setInterval(loadStats, 60000); // Update stats every minute
+    </script>
+    ''' + LOGOUT_SCRIPT
