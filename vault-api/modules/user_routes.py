@@ -2,9 +2,9 @@
 User authentication routes (signup, signin, login)
 """
 from fastapi import APIRouter, HTTPException
-from .models import UserSignup, UserSignin
-from .database import get_users_db_connection
-from .auth import hash_password, verify_password, create_access_token, is_valid_email
+from models import UserSignup, UserSignin
+from database import get_users_db_connection
+from auth import hash_password, verify_password, create_access_token, is_valid_email
 
 router = APIRouter(prefix="/auth", tags=["user-auth"])
 

@@ -8,10 +8,10 @@ import shutil
 from datetime import datetime
 from typing import List
 
-from .auth import verify_admin_token
-from .models import UserAction, ReleaseData
-from .database import get_db_connection
-from .config import UPLOAD_DIR, USER_DB_PATH
+from auth import verify_admin_token
+from models import UserAction, ReleaseData
+from database import get_db_connection
+from config import UPLOAD_DIR, USER_DB_PATH
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 

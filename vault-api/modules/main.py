@@ -7,13 +7,13 @@ import uvicorn
 import os
 
 # Import modular route components
-from .admin_routes import router as admin_router
-from .beta_routes import router as beta_router
-from .analytics_routes import router as analytics_router
-from .admin_pages import router as pages_router
-from .user_routes import router as user_router
-from .database import init_user_database
-from .config import UPLOAD_DIR
+from admin_routes import router as admin_router
+from beta_routes import router as beta_router
+from analytics_routes import router as analytics_router
+from admin_pages import router as pages_router
+from user_routes import router as user_router
+from database import init_user_database
+from config import UPLOAD_DIR
 
 # Initialize FastAPI app
 app = FastAPI(

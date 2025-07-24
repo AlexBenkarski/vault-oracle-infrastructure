@@ -3,8 +3,8 @@
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 
-from .auth import verify_admin_token
-from .models import AnalyticsPayload
+from auth import verify_admin_token
+from models import AnalyticsPayload
 # Note: AnalyticsDB import will be added when available
 
 router = APIRouter(tags=["analytics"])

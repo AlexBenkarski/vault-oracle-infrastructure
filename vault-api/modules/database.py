@@ -5,7 +5,7 @@ from datetime import datetime
 import sqlite3
 import hashlib
 from typing import Optional, Dict, List
-from .config import DB_PATH, USERS_DB_PATH
+from config import DB_PATH, USERS_DB_PATH
 
 def get_db_connection():
     """Get database connection for beta keys"""

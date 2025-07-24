@@ -40,3 +40,4 @@ def init_upload_dirs():
 
 # Service names for monitoring
 ALLOWED_SERVICES = ['vault-api', 'nginx', 'discord-bot']
+USER_DB_PATH = "/opt/vault-api/users.db"

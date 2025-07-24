@@ -377,3 +377,57 @@ async def admin_beta_page():
         loadKeys();
     </script>
     '''
+
+@router.get("/releases", response_class=HTMLResponse)
+async def admin_releases_page():
+    """Release management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>📦 Release Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases" class="active">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+    <div class="card">
+        <h3>Upload New Release</h3>
+        <p>Release management functionality coming soon...</p>
+    </div>
+    <script>
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+    </script>
+    '''
+
+@router.get("/analytics", response_class=HTMLResponse)
+async def admin_analytics_page():
+    """Analytics dashboard page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>📊 Analytics Dashboard</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics" class="active">Analytics</a>
+    </div>
+    <div class="card">
+        <h3>Analytics Overview</h3>
+        <p>Analytics dashboard functionality coming soon...</p>
+    </div>
+    <script>
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+    </script>
+    '''

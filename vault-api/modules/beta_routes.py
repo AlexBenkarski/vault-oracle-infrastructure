@@ -5,10 +5,10 @@ import sqlite3
 import secrets
 from datetime import datetime
 
-from .auth import verify_admin_token
-from .models import KeyValidationRequest, KeyValidationResponse
-from .database import get_db_connection, find_user_by_beta_key, check_key_status, mark_key_as_used
-from .config import USER_DB_PATH
+from auth import verify_admin_token
+from models import KeyValidationRequest, KeyValidationResponse
+from database import get_db_connection, find_user_by_beta_key, check_key_status, mark_key_as_used
+from config import USER_DB_PATH
 
 router = APIRouter(tags=["beta"])
 
