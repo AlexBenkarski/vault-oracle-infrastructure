@@ -1168,6 +1168,66 @@ async def restart_service_endpoint(service_name: str, admin_user: str = Depends(
         raise HTTPException(status_code=status_code, detail=result["message"])
     return result
 
+
+# Enhanced service control endpoints
+@app.post("/admin/services/stop/{service_name}")
+async def stop_service_endpoint(service_name: str, admin_user: str = Depends(verify_admin_token)):
+    """Stop a service"""
+    allowed_services = ['vault-api', 'nginx', 'discord-bot']
+    if service_name not in allowed_services:
+        raise HTTPException(status_code=400, detail="Service not allowed")
+    
+    try:
+        result = subprocess.run(['sudo', 'systemctl', 'stop', service_name],
+                              capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return {"status": "stopped", "service": service_name}
+        else:
+            raise HTTPException(status_code=500, detail=result.stderr)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+# Enhanced service control endpoints
+@app.post("/admin/services/stop/{service_name}")
+async def stop_service_endpoint(service_name: str, admin_user: str = Depends(verify_admin_token)):
+    """Stop a service"""
+    allowed_services = ['vault-api', 'nginx', 'discord-bot']
+    if service_name not in allowed_services:
+        raise HTTPException(status_code=400, detail="Service not allowed")
+    
+    try:
+        result = subprocess.run(['sudo', 'systemctl', 'stop', service_name],
+                              capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return {"status": "stopped", "service": service_name}
+        else:
+            raise HTTPException(status_code=500, detail=result.stderr)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+# Enhanced service control endpoints
+@app.post("/admin/services/stop/{service_name}")
+async def stop_service_endpoint(service_name: str, admin_user: str = Depends(verify_admin_token)):
+    """Stop a service"""
+    allowed_services = ['vault-api', 'nginx', 'discord-bot']
+    if service_name not in allowed_services:
+        raise HTTPException(status_code=400, detail="Service not allowed")
+    
+    try:
+        result = subprocess.run(['sudo', 'systemctl', 'stop', service_name],
+                              capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return {"status": "stopped", "service": service_name}
+        else:
+            raise HTTPException(status_code=500, detail=result.stderr)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/admin/stats")
 async def admin_stats(admin_user: str = Depends(verify_admin_token)):
     """Get admin statistics"""
@@ -1450,9 +1510,1540 @@ async def receive_analytics(payload: AnalyticsPayload):
 
 if __name__ == "__main__":
     import uvicorn
+import string
     print("="*50)
     print("TheVault API Server Starting...")
     print("Admin Login: username=admin, password=Chance19!")
     print("CHANGE DEFAULT PASSWORDS IN PRODUCTION!")
     print("="*50)
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# MISSING ADMIN PAGES - USERS
+@app.get("/admin/users", response_class=HTMLResponse)
+async def admin_users_page():
+    """Admin users management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>👥 User Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users" class="active">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+
+    <div class="card">
+        <h3>👥 Registered Users</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Verified</th>
+                    <th>Beta Access</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="users-table">
+                <tr><td colspan="6">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/admin/users/data', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const users = await response.json();
+                    const tbody = document.getElementById('users-table');
+                    
+                    if (users.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6">No users found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = users.map(user => `
+                        <tr>
+                            <td>${user.id}</td>
+                            <td>${user.email}</td>
+                            <td>${user.email_verified ? '✅' : '❌'}</td>
+                            <td>${user.has_beta ? '✅' : '❌'}</td>
+                            <td>${user.created_at}</td>
+                            <td>
+                                <button class="btn ${user.has_beta ? 'btn-danger' : 'btn-success'}" 
+                                        onclick="toggleBeta(${user.id}, '${user.has_beta ? 'revoke' : 'grant'}')">
+                                    ${user.has_beta ? 'Revoke Beta' : 'Grant Beta'}
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading users:', error);
+            }
+        }
+
+        async function toggleBeta(userId, action) {
+            try {
+                const response = await fetch('/admin/users/beta', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ user_id: userId, action: action })
+                });
+
+                if (response.ok) {
+                    loadUsers();
+                }
+            } catch (error) {
+                console.error('Error toggling beta:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadUsers();
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - BETA KEYS
+@app.get("/admin/beta", response_class=HTMLResponse)
+async def admin_beta_page():
+    """Admin beta keys management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>🔑 Beta Key Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta" class="active">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+
+    <div class="card">
+        <h3>Generate New Beta Key</h3>
+        <button class="btn btn-primary" onclick="generateKey()">Generate Beta Key</button>
+        <div id="new-key-result" style="margin-top: 15px;"></div>
+    </div>
+
+    <div class="card">
+        <h3>🔑 Beta Keys List</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Used By</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="keys-table">
+                <tr><td colspan="5">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function generateKey() {
+            try {
+                const response = await fetch('/admin/beta/generate', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('new-key-result').innerHTML = `
+                        <div style="background: #2d2d2d; padding: 15px; border-radius: 8px; border: 1px solid #4CAF50;">
+                            <strong>New Beta Key Generated:</strong><br>
+                            <code style="font-size: 1.2em; color: #4CAF50;">${data.key}</code>
+                        </div>
+                    `;
+                    loadKeys();
+                }
+            } catch (error) {
+                console.error('Error generating key:', error);
+            }
+        }
+
+        async function loadKeys() {
+            try {
+                const response = await fetch('/admin/beta/keys', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const keys = await response.json();
+                    const tbody = document.getElementById('keys-table');
+                    
+                    if (keys.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="5">No beta keys found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = keys.map(key => `
+                        <tr>
+                            <td><code>${key.key_value}</code></td>
+                            <td>${key.used ? 'Used' : 'Available'}</td>
+                            <td>${key.created_at}</td>
+                            <td>${key.used_by || 'Not used'}</td>
+                            <td>
+                                ${!key.used ? '<button class="btn btn-danger" onclick="revokeKey(\'' + key.key_value + '\')">Revoke</button>' : ''}
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading keys:', error);
+            }
+        }
+
+        async function revokeKey(keyValue) {
+            if (!confirm('Are you sure you want to revoke this key?')) return;
+
+            try {
+                const response = await fetch('/admin/beta/revoke', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ key_value: keyValue })
+                });
+
+                if (response.ok) {
+                    loadKeys();
+                }
+            } catch (error) {
+                console.error('Error revoking key:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadKeys();
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - RELEASES
+@app.get("/admin/releases", response_class=HTMLResponse)
+async def admin_releases_page():
+    """Admin releases management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>📦 Release Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases" class="active">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+
+    <div class="card">
+        <h3>Upload New Release</h3>
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <p>Click to upload Vault.exe file</p>
+            <input type="file" id="fileInput" accept=".exe" style="display: none;" onchange="uploadFile()">
+        </div>
+        <div id="upload-status"></div>
+    </div>
+
+    <div class="card">
+        <h3>📦 Current Releases</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Version</th>
+                    <th>File Size</th>
+                    <th>Upload Date</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="releases-table">
+                <tr><td colspan="5">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            document.getElementById('upload-status').innerHTML = '<p>Uploading...</p>';
+
+            try {
+                const response = await fetch('/admin/releases/upload', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token },
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    document.getElementById('upload-status').innerHTML = `
+                        <div style="color: #4CAF50;">✅ Upload successful: ${result.filename}</div>
+                    `;
+                    loadReleases();
+                } else {
+                    document.getElementById('upload-status').innerHTML = `
+                        <div style="color: #f44336;">❌ Upload failed</div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('upload-status').innerHTML = `
+                    <div style="color: #f44336;">❌ Upload error: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function loadReleases() {
+            try {
+                const response = await fetch('/admin/releases/list', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const releases = await response.json();
+                    const tbody = document.getElementById('releases-table');
+                    
+                    if (releases.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="5">No releases found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = releases.map(release => `
+                        <tr>
+                            <td>${release.version}</td>
+                            <td>${(release.file_size / 1024 / 1024).toFixed(2)} MB</td>
+                            <td>${release.upload_date}</td>
+                            <td>${release.is_current ? '🟢 Current' : '⚪ Available'}</td>
+                            <td>
+                                <button class="btn btn-primary" onclick="setCurrent(${release.id})">Set Current</button>
+                                <button class="btn btn-danger" onclick="deleteRelease(${release.id})">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading releases:', error);
+            }
+        }
+
+        async function setCurrent(releaseId) {
+            try {
+                const response = await fetch('/admin/releases/set-current', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ release_id: releaseId })
+                });
+
+                if (response.ok) {
+                    loadReleases();
+                }
+            } catch (error) {
+                console.error('Error setting current release:', error);
+            }
+        }
+
+        async function deleteRelease(releaseId) {
+            if (!confirm('Are you sure you want to delete this release?')) return;
+
+            try {
+                const response = await fetch('/admin/releases/delete', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ release_id: releaseId })
+                });
+
+                if (response.ok) {
+                    loadReleases();
+                }
+            } catch (error) {
+                console.error('Error deleting release:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadReleases();
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - ANALYTICS
+@app.get("/admin/analytics", response_class=HTMLResponse)
+async def admin_analytics_page():
+    """Admin analytics page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>📊 Analytics Dashboard</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics" class="active">Analytics</a>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-number" id="total-analytics-users">--</div>
+            <div class="stat-label">Total Analytics Users</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="consent-given">--</div>
+            <div class="stat-label">Consent Given</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="avg-session">--</div>
+            <div class="stat-label">Avg Session (min)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="most-used-os">--</div>
+            <div class="stat-label">Most Used OS</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>📊 User Analytics</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Vault ID</th>
+                    <th>Version</th>
+                    <th>OS</th>
+                    <th>Last Ping</th>
+                    <th>Passwords</th>
+                    <th>Folders</th>
+                </tr>
+            </thead>
+            <tbody id="analytics-table">
+                <tr><td colspan="6">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function loadAnalytics() {
+            try {
+                const response = await fetch('/admin/analytics/data', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Update stats
+                    document.getElementById('total-analytics-users').textContent = data.stats.total_users;
+                    document.getElementById('consent-given').textContent = data.stats.consent_given;
+                    document.getElementById('avg-session').textContent = data.stats.avg_session_minutes;
+                    document.getElementById('most-used-os').textContent = data.stats.most_used_os;
+                    
+                    // Update table
+                    const tbody = document.getElementById('analytics-table');
+                    if (data.users.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6">No analytics data found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = data.users.map(user => `
+                        <tr>
+                            <td><code>${user.vault_id.substring(0, 12)}...</code></td>
+                            <td>${user.version}</td>
+                            <td>${user.os}</td>
+                            <td>${user.last_ping}</td>
+                            <td>${user.total_passwords || 0}</td>
+                            <td>${user.total_folders || 0}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading analytics:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadAnalytics();
+        setInterval(loadAnalytics, 60000);
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - USERS
+@app.get("/admin/users", response_class=HTMLResponse)
+async def admin_users_page():
+    """Admin users management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>👥 User Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users" class="active">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+
+    <div class="card">
+        <h3>👥 Registered Users</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Verified</th>
+                    <th>Beta Access</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="users-table">
+                <tr><td colspan="6">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/admin/users/data', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const users = await response.json();
+                    const tbody = document.getElementById('users-table');
+                    
+                    if (users.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6">No users found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = users.map(user => `
+                        <tr>
+                            <td>${user.id}</td>
+                            <td>${user.email}</td>
+                            <td>${user.email_verified ? '✅' : '❌'}</td>
+                            <td>${user.has_beta ? '✅' : '❌'}</td>
+                            <td>${user.created_at}</td>
+                            <td>
+                                <button class="btn ${user.has_beta ? 'btn-danger' : 'btn-success'}" 
+                                        onclick="toggleBeta(${user.id}, '${user.has_beta ? 'revoke' : 'grant'}')">
+                                    ${user.has_beta ? 'Revoke Beta' : 'Grant Beta'}
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading users:', error);
+            }
+        }
+
+        async function toggleBeta(userId, action) {
+            try {
+                const response = await fetch('/admin/users/beta', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ user_id: userId, action: action })
+                });
+
+                if (response.ok) {
+                    loadUsers();
+                }
+            } catch (error) {
+                console.error('Error toggling beta:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadUsers();
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - BETA KEYS
+@app.get("/admin/beta", response_class=HTMLResponse)
+async def admin_beta_page():
+    """Admin beta keys management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>🔑 Beta Key Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta" class="active">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+
+    <div class="card">
+        <h3>Generate New Beta Key</h3>
+        <button class="btn btn-primary" onclick="generateKey()">Generate Beta Key</button>
+        <div id="new-key-result" style="margin-top: 15px;"></div>
+    </div>
+
+    <div class="card">
+        <h3>🔑 Beta Keys List</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Used By</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="keys-table">
+                <tr><td colspan="5">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function generateKey() {
+            try {
+                const response = await fetch('/admin/beta/generate', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('new-key-result').innerHTML = `
+                        <div style="background: #2d2d2d; padding: 15px; border-radius: 8px; border: 1px solid #4CAF50;">
+                            <strong>New Beta Key Generated:</strong><br>
+                            <code style="font-size: 1.2em; color: #4CAF50;">${data.key}</code>
+                        </div>
+                    `;
+                    loadKeys();
+                }
+            } catch (error) {
+                console.error('Error generating key:', error);
+            }
+        }
+
+        async function loadKeys() {
+            try {
+                const response = await fetch('/admin/beta/keys', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const keys = await response.json();
+                    const tbody = document.getElementById('keys-table');
+                    
+                    if (keys.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="5">No beta keys found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = keys.map(key => `
+                        <tr>
+                            <td><code>${key.key_value}</code></td>
+                            <td>${key.used ? 'Used' : 'Available'}</td>
+                            <td>${key.created_at}</td>
+                            <td>${key.used_by || 'Not used'}</td>
+                            <td>
+                                ${!key.used ? '<button class="btn btn-danger" onclick="revokeKey(\'' + key.key_value + '\')">Revoke</button>' : ''}
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading keys:', error);
+            }
+        }
+
+        async function revokeKey(keyValue) {
+            if (!confirm('Are you sure you want to revoke this key?')) return;
+
+            try {
+                const response = await fetch('/admin/beta/revoke', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ key_value: keyValue })
+                });
+
+                if (response.ok) {
+                    loadKeys();
+                }
+            } catch (error) {
+                console.error('Error revoking key:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadKeys();
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - RELEASES
+@app.get("/admin/releases", response_class=HTMLResponse)
+async def admin_releases_page():
+    """Admin releases management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>📦 Release Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases" class="active">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+
+    <div class="card">
+        <h3>Upload New Release</h3>
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <p>Click to upload Vault.exe file</p>
+            <input type="file" id="fileInput" accept=".exe" style="display: none;" onchange="uploadFile()">
+        </div>
+        <div id="upload-status"></div>
+    </div>
+
+    <div class="card">
+        <h3>📦 Current Releases</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Version</th>
+                    <th>File Size</th>
+                    <th>Upload Date</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="releases-table">
+                <tr><td colspan="5">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            document.getElementById('upload-status').innerHTML = '<p>Uploading...</p>';
+
+            try {
+                const response = await fetch('/admin/releases/upload', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token },
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    document.getElementById('upload-status').innerHTML = `
+                        <div style="color: #4CAF50;">✅ Upload successful: ${result.filename}</div>
+                    `;
+                    loadReleases();
+                } else {
+                    document.getElementById('upload-status').innerHTML = `
+                        <div style="color: #f44336;">❌ Upload failed</div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('upload-status').innerHTML = `
+                    <div style="color: #f44336;">❌ Upload error: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function loadReleases() {
+            try {
+                const response = await fetch('/admin/releases/list', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const releases = await response.json();
+                    const tbody = document.getElementById('releases-table');
+                    
+                    if (releases.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="5">No releases found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = releases.map(release => `
+                        <tr>
+                            <td>${release.version}</td>
+                            <td>${(release.file_size / 1024 / 1024).toFixed(2)} MB</td>
+                            <td>${release.upload_date}</td>
+                            <td>${release.is_current ? '🟢 Current' : '⚪ Available'}</td>
+                            <td>
+                                <button class="btn btn-primary" onclick="setCurrent(${release.id})">Set Current</button>
+                                <button class="btn btn-danger" onclick="deleteRelease(${release.id})">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading releases:', error);
+            }
+        }
+
+        async function setCurrent(releaseId) {
+            try {
+                const response = await fetch('/admin/releases/set-current', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ release_id: releaseId })
+                });
+
+                if (response.ok) {
+                    loadReleases();
+                }
+            } catch (error) {
+                console.error('Error setting current release:', error);
+            }
+        }
+
+        async function deleteRelease(releaseId) {
+            if (!confirm('Are you sure you want to delete this release?')) return;
+
+            try {
+                const response = await fetch('/admin/releases/delete', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ release_id: releaseId })
+                });
+
+                if (response.ok) {
+                    loadReleases();
+                }
+            } catch (error) {
+                console.error('Error deleting release:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadReleases();
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - ANALYTICS
+@app.get("/admin/analytics", response_class=HTMLResponse)
+async def admin_analytics_page():
+    """Admin analytics page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>📊 Analytics Dashboard</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics" class="active">Analytics</a>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-number" id="total-analytics-users">--</div>
+            <div class="stat-label">Total Analytics Users</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="consent-given">--</div>
+            <div class="stat-label">Consent Given</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="avg-session">--</div>
+            <div class="stat-label">Avg Session (min)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="most-used-os">--</div>
+            <div class="stat-label">Most Used OS</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>📊 User Analytics</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Vault ID</th>
+                    <th>Version</th>
+                    <th>OS</th>
+                    <th>Last Ping</th>
+                    <th>Passwords</th>
+                    <th>Folders</th>
+                </tr>
+            </thead>
+            <tbody id="analytics-table">
+                <tr><td colspan="6">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function loadAnalytics() {
+            try {
+                const response = await fetch('/admin/analytics/data', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Update stats
+                    document.getElementById('total-analytics-users').textContent = data.stats.total_users;
+                    document.getElementById('consent-given').textContent = data.stats.consent_given;
+                    document.getElementById('avg-session').textContent = data.stats.avg_session_minutes;
+                    document.getElementById('most-used-os').textContent = data.stats.most_used_os;
+                    
+                    // Update table
+                    const tbody = document.getElementById('analytics-table');
+                    if (data.users.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6">No analytics data found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = data.users.map(user => `
+                        <tr>
+                            <td><code>${user.vault_id.substring(0, 12)}...</code></td>
+                            <td>${user.version}</td>
+                            <td>${user.os}</td>
+                            <td>${user.last_ping}</td>
+                            <td>${user.total_passwords || 0}</td>
+                            <td>${user.total_folders || 0}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading analytics:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadAnalytics();
+        setInterval(loadAnalytics, 60000);
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - USERS
+@app.get("/admin/users", response_class=HTMLResponse)
+async def admin_users_page():
+    """Admin users management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>👥 User Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users" class="active">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+
+    <div class="card">
+        <h3>👥 Registered Users</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Verified</th>
+                    <th>Beta Access</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="users-table">
+                <tr><td colspan="6">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/admin/users/data', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const users = await response.json();
+                    const tbody = document.getElementById('users-table');
+                    
+                    if (users.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6">No users found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = users.map(user => `
+                        <tr>
+                            <td>${user.id}</td>
+                            <td>${user.email}</td>
+                            <td>${user.email_verified ? '✅' : '❌'}</td>
+                            <td>${user.has_beta ? '✅' : '❌'}</td>
+                            <td>${user.created_at}</td>
+                            <td>
+                                <button class="btn ${user.has_beta ? 'btn-danger' : 'btn-success'}" 
+                                        onclick="toggleBeta(${user.id}, '${user.has_beta ? 'revoke' : 'grant'}')">
+                                    ${user.has_beta ? 'Revoke Beta' : 'Grant Beta'}
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading users:', error);
+            }
+        }
+
+        async function toggleBeta(userId, action) {
+            try {
+                const response = await fetch('/admin/users/beta', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ user_id: userId, action: action })
+                });
+
+                if (response.ok) {
+                    loadUsers();
+                }
+            } catch (error) {
+                console.error('Error toggling beta:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadUsers();
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - BETA KEYS
+@app.get("/admin/beta", response_class=HTMLResponse)
+async def admin_beta_page():
+    """Admin beta keys management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>🔑 Beta Key Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta" class="active">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+
+    <div class="card">
+        <h3>Generate New Beta Key</h3>
+        <button class="btn btn-primary" onclick="generateKey()">Generate Beta Key</button>
+        <div id="new-key-result" style="margin-top: 15px;"></div>
+    </div>
+
+    <div class="card">
+        <h3>🔑 Beta Keys List</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Used By</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="keys-table">
+                <tr><td colspan="5">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function generateKey() {
+            try {
+                const response = await fetch('/admin/beta/generate', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('new-key-result').innerHTML = `
+                        <div style="background: #2d2d2d; padding: 15px; border-radius: 8px; border: 1px solid #4CAF50;">
+                            <strong>New Beta Key Generated:</strong><br>
+                            <code style="font-size: 1.2em; color: #4CAF50;">${data.key}</code>
+                        </div>
+                    `;
+                    loadKeys();
+                }
+            } catch (error) {
+                console.error('Error generating key:', error);
+            }
+        }
+
+        async function loadKeys() {
+            try {
+                const response = await fetch('/admin/beta/keys', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const keys = await response.json();
+                    const tbody = document.getElementById('keys-table');
+                    
+                    if (keys.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="5">No beta keys found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = keys.map(key => `
+                        <tr>
+                            <td><code>${key.key_value}</code></td>
+                            <td>${key.used ? 'Used' : 'Available'}</td>
+                            <td>${key.created_at}</td>
+                            <td>${key.used_by || 'Not used'}</td>
+                            <td>
+                                ${!key.used ? '<button class="btn btn-danger" onclick="revokeKey(\'' + key.key_value + '\')">Revoke</button>' : ''}
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading keys:', error);
+            }
+        }
+
+        async function revokeKey(keyValue) {
+            if (!confirm('Are you sure you want to revoke this key?')) return;
+
+            try {
+                const response = await fetch('/admin/beta/revoke', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ key_value: keyValue })
+                });
+
+                if (response.ok) {
+                    loadKeys();
+                }
+            } catch (error) {
+                console.error('Error revoking key:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadKeys();
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - RELEASES
+@app.get("/admin/releases", response_class=HTMLResponse)
+async def admin_releases_page():
+    """Admin releases management page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>📦 Release Management</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases" class="active">Releases</a>
+        <a href="/admin/analytics">Analytics</a>
+    </div>
+
+    <div class="card">
+        <h3>Upload New Release</h3>
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <p>Click to upload Vault.exe file</p>
+            <input type="file" id="fileInput" accept=".exe" style="display: none;" onchange="uploadFile()">
+        </div>
+        <div id="upload-status"></div>
+    </div>
+
+    <div class="card">
+        <h3>📦 Current Releases</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Version</th>
+                    <th>File Size</th>
+                    <th>Upload Date</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="releases-table">
+                <tr><td colspan="5">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            document.getElementById('upload-status').innerHTML = '<p>Uploading...</p>';
+
+            try {
+                const response = await fetch('/admin/releases/upload', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token },
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    document.getElementById('upload-status').innerHTML = `
+                        <div style="color: #4CAF50;">✅ Upload successful: ${result.filename}</div>
+                    `;
+                    loadReleases();
+                } else {
+                    document.getElementById('upload-status').innerHTML = `
+                        <div style="color: #f44336;">❌ Upload failed</div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('upload-status').innerHTML = `
+                    <div style="color: #f44336;">❌ Upload error: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function loadReleases() {
+            try {
+                const response = await fetch('/admin/releases/list', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const releases = await response.json();
+                    const tbody = document.getElementById('releases-table');
+                    
+                    if (releases.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="5">No releases found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = releases.map(release => `
+                        <tr>
+                            <td>${release.version}</td>
+                            <td>${(release.file_size / 1024 / 1024).toFixed(2)} MB</td>
+                            <td>${release.upload_date}</td>
+                            <td>${release.is_current ? '🟢 Current' : '⚪ Available'}</td>
+                            <td>
+                                <button class="btn btn-primary" onclick="setCurrent(${release.id})">Set Current</button>
+                                <button class="btn btn-danger" onclick="deleteRelease(${release.id})">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading releases:', error);
+            }
+        }
+
+        async function setCurrent(releaseId) {
+            try {
+                const response = await fetch('/admin/releases/set-current', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ release_id: releaseId })
+                });
+
+                if (response.ok) {
+                    loadReleases();
+                }
+            } catch (error) {
+                console.error('Error setting current release:', error);
+            }
+        }
+
+        async function deleteRelease(releaseId) {
+            if (!confirm('Are you sure you want to delete this release?')) return;
+
+            try {
+                const response = await fetch('/admin/releases/delete', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ release_id: releaseId })
+                });
+
+                if (response.ok) {
+                    loadReleases();
+                }
+            } catch (error) {
+                console.error('Error deleting release:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadReleases();
+    </script>
+    '''
+
+# MISSING ADMIN PAGES - ANALYTICS
+@app.get("/admin/analytics", response_class=HTMLResponse)
+async def admin_analytics_page():
+    """Admin analytics page"""
+    return ADMIN_STYLES + '''
+    <div class="header">
+        <h1>📊 Analytics Dashboard</h1>
+        <button class="btn btn-danger" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="nav">
+        <a href="/admin/dashboard">Dashboard</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/beta">Beta Keys</a>
+        <a href="/admin/releases">Releases</a>
+        <a href="/admin/analytics" class="active">Analytics</a>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-number" id="total-analytics-users">--</div>
+            <div class="stat-label">Total Analytics Users</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="consent-given">--</div>
+            <div class="stat-label">Consent Given</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="avg-session">--</div>
+            <div class="stat-label">Avg Session (min)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="most-used-os">--</div>
+            <div class="stat-label">Most Used OS</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>📊 User Analytics</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Vault ID</th>
+                    <th>Version</th>
+                    <th>OS</th>
+                    <th>Last Ping</th>
+                    <th>Passwords</th>
+                    <th>Folders</th>
+                </tr>
+            </thead>
+            <tbody id="analytics-table">
+                <tr><td colspan="6">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function loadAnalytics() {
+            try {
+                const response = await fetch('/admin/analytics/data', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Update stats
+                    document.getElementById('total-analytics-users').textContent = data.stats.total_users;
+                    document.getElementById('consent-given').textContent = data.stats.consent_given;
+                    document.getElementById('avg-session').textContent = data.stats.avg_session_minutes;
+                    document.getElementById('most-used-os').textContent = data.stats.most_used_os;
+                    
+                    // Update table
+                    const tbody = document.getElementById('analytics-table');
+                    if (data.users.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6">No analytics data found</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = data.users.map(user => `
+                        <tr>
+                            <td><code>${user.vault_id.substring(0, 12)}...</code></td>
+                            <td>${user.version}</td>
+                            <td>${user.os}</td>
+                            <td>${user.last_ping}</td>
+                            <td>${user.total_passwords || 0}</td>
+                            <td>${user.total_folders || 0}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading analytics:', error);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/admin';
+        }
+
+        loadAnalytics();
+        setInterval(loadAnalytics, 60000);
+    </script>
+    '''
