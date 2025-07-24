@@ -1,296 +1,52 @@
-"""Admin HTML Pages - Dashboard and management interfaces"""
+"""Admin HTML Pages - Complete admin interface pages"""
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
 router = APIRouter(prefix="/admin", tags=["admin-pages"])
 
-# Base admin styles
+# Shared admin styles
 ADMIN_STYLES = '''
 <style>
-    * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-    }
-    
-    body {
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-        color: white;
-        line-height: 1.6;
-        min-height: 100vh;
-    }
-    
-    .container {
-        max-width: 1400px;
-        margin: 0 auto;
-        padding: 20px;
-    }
-    
-    .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 30px;
-        padding: 20px 0;
-        border-bottom: 2px solid #4CAF50;
-    }
-    
-    .header h1 {
-        color: #4CAF50;
-        font-size: 2.5em;
-        font-weight: 300;
-    }
-    
-    .nav {
-        display: flex;
-        gap: 30px;
-        margin-bottom: 40px;
-        border-bottom: 1px solid #333;
-        padding-bottom: 10px;
-    }
-    
-    .nav a {
-        color: #ccc;
-        text-decoration: none;
-        padding: 15px 20px;
-        border-bottom: 3px solid transparent;
-        transition: all 0.3s ease;
-        font-weight: 500;
-    }
-    
-    .nav a:hover, .nav a.active {
-        color: #4CAF50;
-        border-bottom-color: #4CAF50;
-        transform: translateY(-2px);
-    }
-    
-    .card {
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
-        border-radius: 12px;
-        padding: 30px;
-        margin: 25px 0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    }
-    
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-        gap: 25px;
-        margin: 30px 0;
-    }
-    
-    .stat-card {
-        background: linear-gradient(135deg, rgba(76, 175, 80, 0.1), rgba(76, 175, 80, 0.05));
-        border: 2px solid #4CAF50;
-        border-radius: 12px;
-        padding: 25px;
-        text-align: center;
-        transition: all 0.3s ease;
-    }
-    
-    .stat-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 25px rgba(76, 175, 80, 0.3);
-    }
-    
-    .stat-number {
-        font-size: 2.8em;
-        font-weight: bold;
-        color: #4CAF50;
-        margin-bottom: 10px;
-    }
-    
-    .stat-label {
-        color: #a0a0a0;
-        text-transform: uppercase;
-        font-size: 0.9em;
-        letter-spacing: 1px;
-    }
-    
-    .service-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-        gap: 25px;
-        margin: 30px 0;
-    }
-    
-    .service-box {
-        background: rgba(255, 255, 255, 0.03);
-        border-radius: 15px;
-        padding: 25px;
-        border: 3px solid;
-        position: relative;
-        transition: all 0.3s ease;
-        backdrop-filter: blur(10px);
-    }
-    
-    .service-box.running {
-        border-color: #4CAF50;
-        background: linear-gradient(135deg, rgba(76,175,80,0.15), rgba(76,175,80,0.05));
-        box-shadow: 0 0 20px rgba(76, 175, 80, 0.3);
-    }
-    
-    .service-box.stopped {
-        border-color: #f44336;
-        background: linear-gradient(135deg, rgba(244,67,54,0.15), rgba(244,67,54,0.05));
-        box-shadow: 0 0 20px rgba(244, 67, 54, 0.3);
-    }
-    
-    .service-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-    }
-    
-    .service-name {
-        font-size: 1.4em;
-        font-weight: bold;
-        color: white;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    
-    .service-status {
-        font-size: 0.9em;
-        padding: 6px 15px;
-        border-radius: 25px;
-        font-weight: bold;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .status-active {
-        background: #4CAF50;
-        color: white;
-        box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
-    }
-    
-    .status-inactive {
-        background: #f44336;
-        color: white;
-        box-shadow: 0 0 10px rgba(244, 67, 54, 0.5);
-    }
-    
-    .service-info {
-        margin: 20px 0;
-        color: #ccc;
-        font-size: 0.95em;
-        line-height: 1.6;
-    }
-    
-    .uptime {
-        color: #4CAF50;
-        font-weight: bold;
-        margin-top: 8px;
-    }
-    
-    .service-controls {
-        display: flex;
-        gap: 12px;
-        margin-top: 20px;
-    }
-    
-    .control-btn {
-        flex: 1;
-        padding: 12px 8px;
-        border: none;
-        border-radius: 8px;
-        font-weight: bold;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        text-transform: uppercase;
-        font-size: 0.85em;
-        letter-spacing: 0.5px;
-    }
-    
-    .btn-start {
-        background: linear-gradient(135deg, #4CAF50, #45a049);
-        color: white;
-        box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
-    }
-    
-    .btn-stop {
-        background: linear-gradient(135deg, #f44336, #da190b);
-        color: white;
-        box-shadow: 0 4px 15px rgba(244, 67, 54, 0.3);
-    }
-    
-    .btn-restart {
-        background: linear-gradient(135deg, #2196F3, #0b7dda);
-        color: white;
-        box-shadow: 0 4px 15px rgba(33, 150, 243, 0.3);
-    }
-    
-    .control-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
-    }
-    
-    .control-btn:disabled {
-        background: #666 !important;
-        cursor: not-allowed;
-        opacity: 0.6;
-        transform: none;
-        box-shadow: none;
-    }
-    
-    .btn {
-        padding: 12px 24px;
-        border: none;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 600;
-        transition: all 0.3s ease;
-        text-decoration: none;
-        display: inline-block;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .btn-primary {
-        background: linear-gradient(135deg, #4CAF50, #45a049);
-        color: white;
-        box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
-    }
-    
-    .btn-danger {
-        background: linear-gradient(135deg, #f44336, #da190b);
-        color: white;
-        box-shadow: 0 4px 15px rgba(244, 67, 54, 0.3);
-    }
-    
-    .btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
-    }
-    
-    .quick-stats {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background: rgba(255, 255, 255, 0.05);
-        padding: 15px 25px;
-        border-radius: 10px;
-        margin-top: 20px;
-    }
-    
-    .quick-stats span {
-        font-weight: bold;
-    }
-    
-    #api-health.online {
-        color: #4CAF50;
-    }
-    
-    #api-health.error {
-        color: #f44336;
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Arial; background: #1a1a1a; color: #fff; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #4CAF50; padding-bottom: 15px; }
+    .header h1 { color: #4CAF50; }
+    .nav { display: flex; gap: 20px; margin-bottom: 30px; }
+    .nav a { color: #fff; text-decoration: none; padding: 10px 20px; border-radius: 5px; background: #333; transition: all 0.3s; }
+    .nav a:hover, .nav a.active { background: #4CAF50; }
+    .card { background: #2d2d2d; padding: 25px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #444; }
+    .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; transition: all 0.3s; text-decoration: none; display: inline-block; font-size: 14px; }
+    .btn-primary { background: #4CAF50; color: white; }
+    .btn-warning { background: #FF9800; color: white; }
+    .btn-danger { background: #f44336; color: white; }
+    .btn-secondary { background: #6c757d; color: white; }
+    .btn:hover { opacity: 0.8; transform: translateY(-1px); }
+    .table { width: 100%; border-collapse: collapse; background: #2d2d2d; margin-top: 15px; }
+    .table th, .table td { padding: 12px; text-align: left; border-bottom: 1px solid #444; }
+    .table th { background: #4CAF50; color: white; font-weight: bold; }
+    .table tr:hover { background: rgba(76, 175, 80, 0.1); }
+    .badge { padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; margin-right: 5px; }
+    .badge-success { background: #4CAF50; color: white; }
+    .badge-warning { background: #FF9800; color: white; }
+    .badge-danger { background: #f44336; color: white; }
+    .badge-secondary { background: #6c757d; color: white; }
+    .search-bar { width: 100%; padding: 12px; background: #333; border: 1px solid #555; border-radius: 6px; color: white; margin-bottom: 20px; font-size: 16px; }
+    .search-bar:focus { outline: none; border-color: #4CAF50; }
+    .controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; }
+    .stats-mini { display: flex; gap: 20px; }
+    .stats-mini .stat { text-align: center; padding: 10px; background: #333; border-radius: 5px; min-width: 80px; }
+    .stats-mini .stat-number { font-size: 1.2rem; color: #4CAF50; font-weight: bold; }
+    .stats-mini .stat-label { font-size: 0.8rem; color: #a0a0a0; }
+    .loading { text-align: center; padding: 40px; color: #a0a0a0; }
+    .empty-state { text-align: center; padding: 40px; color: #a0a0a0; }
+    .actions { display: flex; gap: 5px; }
+    .filter-tabs { display: flex; gap: 10px; margin-bottom: 15px; }
+    .filter-tab { padding: 8px 16px; background: #333; border: none; color: white; border-radius: 4px; cursor: pointer; transition: all 0.3s; }
+    .filter-tab.active { background: #4CAF50; }
+    .bulk-actions { display: none; padding: 15px; background: #333; border-radius: 5px; margin-bottom: 15px; }
+    .bulk-actions.show { display: flex; justify-content: space-between; align-items: center; }
 </style>
 '''
 
@@ -301,84 +57,30 @@ async def admin_login_page():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Vault Admin Login</title>
+        <title>Admin Login - TheVault</title>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-                color: white;
-                height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            .login-container {
-                background: rgba(255, 255, 255, 0.05);
-                backdrop-filter: blur(10px);
-                padding: 40px;
-                border-radius: 15px;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-                width: 400px;
-            }
-            .login-container h1 {
-                color: #4CAF50;
-                text-align: center;
-                margin-bottom: 30px;
-                font-size: 2em;
-            }
-            .form-group {
-                margin-bottom: 20px;
-            }
-            .form-group label {
-                display: block;
-                margin-bottom: 8px;
-                color: #ccc;
-                font-weight: 500;
-            }
-            .form-group input {
-                width: 100%;
-                padding: 12px;
-                background: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                color: white;
-                font-size: 16px;
-            }
-            .form-group input:focus {
-                outline: none;
-                border-color: #4CAF50;
-                box-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
-            }
-            .btn {
-                width: 100%;
-                padding: 12px;
-                background: linear-gradient(135deg, #4CAF50, #45a049);
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 16px;
-                font-weight: bold;
-                cursor: pointer;
-                transition: all 0.3s ease;
-            }
-            .btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
-            }
-            .error {
-                color: #f44336;
-                text-align: center;
-                margin-top: 15px;
-                display: none;
-            }
+            body { font-family: 'Segoe UI', Arial; background: linear-gradient(135deg, #1a1a1a, #2d2d2d); color: #fff; height: 100vh; display: flex; align-items: center; justify-content: center; }
+            .login-container { background: #2d2d2d; padding: 40px; border-radius: 10px; border: 1px solid #4CAF50; box-shadow: 0 10px 30px rgba(0,0,0,0.5); min-width: 400px; }
+            .login-header { text-align: center; margin-bottom: 30px; }
+            .login-header h1 { color: #4CAF50; margin-bottom: 10px; }
+            .form-group { margin-bottom: 20px; }
+            .form-group label { display: block; margin-bottom: 8px; font-weight: bold; }
+            .form-group input { width: 100%; padding: 12px; background: #333; border: 1px solid #555; border-radius: 5px; color: white; font-size: 16px; }
+            .form-group input:focus { outline: none; border-color: #4CAF50; }
+            .btn { width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; transition: all 0.3s; }
+            .btn:hover { background: #45a049; transform: translateY(-1px); }
+            .error { background: #f44336; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px; }
         </style>
     </head>
     <body>
         <div class="login-container">
-            <h1>🔐 Admin Login</h1>
-            <form onsubmit="login(event)">
+            <div class="login-header">
+                <h1>🔐 Admin Portal</h1>
+                <p>TheVault Desktop Management</p>
+            </div>
+            <div id="error" class="error" style="display: none;"></div>
+            <form id="login-form">
                 <div class="form-group">
                     <label>Username</label>
                     <input type="text" id="username" required>
@@ -388,39 +90,38 @@ async def admin_login_page():
                     <input type="password" id="password" required>
                 </div>
                 <button type="submit" class="btn">Login</button>
-                <div class="error" id="error"></div>
             </form>
         </div>
 
         <script>
-            async function login(event) {
-                event.preventDefault();
+            document.getElementById('login-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
                 
                 const username = document.getElementById('username').value;
                 const password = document.getElementById('password').value;
                 const errorDiv = document.getElementById('error');
-
+                
                 try {
                     const response = await fetch('/admin/auth', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ username, password })
                     });
-
+                    
+                    const data = await response.json();
+                    
                     if (response.ok) {
-                        const data = await response.json();
                         localStorage.setItem('admin_token', data.access_token);
                         window.location.href = '/admin/dashboard';
                     } else {
-                        const error = await response.json();
-                        errorDiv.textContent = error.detail || 'Login failed';
+                        errorDiv.textContent = data.detail || 'Login failed';
                         errorDiv.style.display = 'block';
                     }
                 } catch (error) {
-                    errorDiv.textContent = 'Network error';
+                    errorDiv.textContent = 'Connection error';
                     errorDiv.style.display = 'block';
                 }
-            }
+            });
         </script>
     </body>
     </html>
@@ -428,14 +129,13 @@ async def admin_login_page():
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def admin_dashboard():
-    """Enhanced admin dashboard with service monitoring"""
+    """Main admin dashboard"""
     return ADMIN_STYLES + '''
     <div class="container">
         <div class="header">
-            <h1>🔐 Admin Dashboard</h1>
+            <h1>📊 Admin Dashboard</h1>
             <button class="btn btn-danger" onclick="logout()">Logout</button>
         </div>
-
         <div class="nav">
             <a href="/admin/dashboard" class="active">Dashboard</a>
             <a href="/admin/users">Users</a>
@@ -443,35 +143,32 @@ async def admin_dashboard():
             <a href="/admin/releases">Releases</a>
             <a href="/admin/analytics">Analytics</a>
         </div>
-
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-number" id="total-users">--</div>
-                <div class="stat-label">Total Users</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="verified-users">--</div>
-                <div class="stat-label">Verified Users</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="beta-users">--</div>
-                <div class="stat-label">Beta Users</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="analytics-users">--</div>
-                <div class="stat-label">Analytics Users</div>
+        
+        <div class="card">
+            <h3>📈 System Statistics</h3>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number" id="total-users">-</div>
+                    <div class="stat-label">Total Users</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="verified-users">-</div>
+                    <div class="stat-label">Verified Users</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="beta-users">-</div>
+                    <div class="stat-label">Beta Users</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="analytics-users">-</div>
+                    <div class="stat-label">Analytics Users</div>
+                </div>
             </div>
         </div>
 
         <div class="card">
-            <h3>🖥️ System Services</h3>
-            <div class="service-grid" id="services-grid">
-                <!-- Services will be dynamically loaded here -->
-            </div>
-            <div class="quick-stats">
-                <span>API Status: <span id="api-health">Checking...</span></span>
-                <span>Last Updated: <span id="last-updated">Never</span></span>
-            </div>
+            <h3>🖥️ Service Status</h3>
+            <div id="service-status">Loading...</div>
         </div>
     </div>
 
@@ -479,98 +176,12 @@ async def admin_dashboard():
         const token = localStorage.getItem('admin_token');
         if (!token) window.location.href = '/admin';
 
-        let servicesData = {};
-
-        async function updateServiceStatus() {
-            try {
-                const response = await fetch('/admin/services/status', {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-
-                if (response.ok) {
-                    const services = await response.json();
-                    servicesData = {};
-                    services.forEach(service => servicesData[service.name] = service);
-                    renderServices();
-                    document.getElementById('api-health').textContent = 'Online';
-                    document.getElementById('api-health').className = 'online';
-                    document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
-                } else {
-                    document.getElementById('api-health').textContent = 'Error';
-                    document.getElementById('api-health').className = 'error';
-                }
-            } catch (error) {
-                console.error('Service status error:', error);
-                document.getElementById('api-health').textContent = 'Error';
-                document.getElementById('api-health').className = 'error';
-            }
-        }
-
-        function renderServices() {
-            const grid = document.getElementById('services-grid');
-            grid.innerHTML = '';
-
-            Object.values(servicesData).forEach(service => {
-                const isRunning = service.status === 'active';
-                const uptime = service.uptime || 'Unknown';
-                
-                const serviceBox = document.createElement('div');
-                serviceBox.className = `service-box ${isRunning ? 'running' : 'stopped'}`;
-                serviceBox.innerHTML = `
-                    <div class="service-header">
-                        <div class="service-name">${service.name}</div>
-                        <div class="service-status ${isRunning ? 'status-active' : 'status-inactive'}">
-                            ${isRunning ? 'Running' : 'Stopped'}
-                        </div>
-                    </div>
-                    <div class="service-info">
-                        <strong>Status:</strong> ${service.status}<br>
-                        <strong>Last Check:</strong> ${new Date(service.last_check).toLocaleTimeString()}
-                        ${isRunning ? `<div class="uptime">Uptime: ${uptime}</div>` : ''}
-                    </div>
-                    <div class="service-controls">
-                        <button class="control-btn btn-start" onclick="controlService('${service.name}', 'start')" 
-                                ${isRunning ? 'disabled' : ''}>Start</button>
-                        <button class="control-btn btn-stop" onclick="controlService('${service.name}', 'stop')" 
-                                ${!isRunning ? 'disabled' : ''}>Stop</button>
-                        <button class="control-btn btn-restart" onclick="controlService('${service.name}', 'restart')">Restart</button>
-                    </div>
-                `;
-                grid.appendChild(serviceBox);
-            });
-        }
-
-        async function controlService(serviceName, action) {
-            const buttons = document.querySelectorAll(`[onclick*="${serviceName}"]`);
-            buttons.forEach(btn => {
-                btn.disabled = true;
-                btn.textContent = action.charAt(0).toUpperCase() + action.slice(1) + 'ing...';
-            });
-
-            try {
-                const response = await fetch(`/admin/services/${action}/${serviceName}`, {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-
-                if (response.ok) {
-                    setTimeout(updateServiceStatus, 2000);
-                }
-            } catch (error) {
-                console.error(`${action} error:`, error);
-            } finally {
-                setTimeout(() => {
-                    updateServiceStatus();
-                }, 3000);
-            }
-        }
-
         async function loadStats() {
             try {
                 const response = await fetch('/admin/stats', {
-                    headers: { 'Authorization': 'Bearer ' + token }
+                    headers: { 'Authorization': `Bearer ${token}` }
                 });
-
+                
                 if (response.ok) {
                     const stats = await response.json();
                     document.getElementById('total-users').textContent = stats.total_users;
@@ -582,6 +193,29 @@ async def admin_dashboard():
                 }
             } catch (error) {
                 console.error('Error loading stats:', error);
+            }
+        }
+
+        async function updateServiceStatus() {
+            try {
+                const response = await fetch('/admin/services', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (response.ok) {
+                    const services = await response.json();
+                    const statusDiv = document.getElementById('service-status');
+                    statusDiv.innerHTML = services.map(service => `
+                        <div style="display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #444;">
+                            <span>${service.name}</span>
+                            <span class="badge ${service.status === 'active' ? 'badge-success' : 'badge-danger'}">
+                                ${service.status}
+                            </span>
+                        </div>
+                    `).join('');
+                }
+            } catch (error) {
+                document.getElementById('service-status').innerHTML = '<div style="color: #f44336;">Error loading service status</div>';
             }
         }
 
@@ -600,7 +234,7 @@ async def admin_dashboard():
 
 @router.get("/users", response_class=HTMLResponse)
 async def admin_users_page():
-    """User management page"""
+    """Enhanced user management page with search and controls"""
     return ADMIN_STYLES + '''
     <div class="container">
         <div class="header">
@@ -614,16 +248,347 @@ async def admin_users_page():
             <a href="/admin/releases">Releases</a>
             <a href="/admin/analytics">Analytics</a>
         </div>
+
         <div class="card">
-            <h3>Registered Users</h3>
-            <p>User management functionality coming soon...</p>
+            <div class="controls">
+                <div class="stats-mini" id="user-stats">
+                    <div class="stat">
+                        <div class="stat-number" id="showing-count">0</div>
+                        <div class="stat-label">Showing</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-number" id="total-count">0</div>
+                        <div class="stat-label">Total</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-number" id="beta-count">0</div>
+                        <div class="stat-label">Beta</div>
+                    </div>
+                </div>
+                <div>
+                    <button class="btn btn-secondary" onclick="exportUsers()">📊 Export CSV</button>
+                    <button class="btn btn-primary" onclick="refreshUsers()">🔄 Refresh</button>
+                </div>
+            </div>
+
+            <input type="text" class="search-bar" id="search-input" placeholder="🔍 Search users by email, ID, or date..." onkeyup="filterUsers()">
+            
+            <div class="filter-tabs">
+                <button class="filter-tab active" onclick="setFilter('all')">All Users</button>
+                <button class="filter-tab" onclick="setFilter('verified')">Verified</button>
+                <button class="filter-tab" onclick="setFilter('beta')">Beta Users</button>
+                <button class="filter-tab" onclick="setFilter('unverified')">Unverified</button>
+                <button class="filter-tab" onclick="setFilter('recent')">Recent (7 days)</button>
+            </div>
+
+            <div class="bulk-actions" id="bulk-actions">
+                <span id="selected-count">0 users selected</span>
+                <div>
+                    <button class="btn btn-warning" onclick="bulkGrantBeta()">Grant Beta</button>
+                    <button class="btn btn-secondary" onclick="bulkRevokeBeta()">Revoke Beta</button>
+                    <button class="btn btn-danger" onclick="bulkDelete()">Delete Selected</button>
+                </div>
+            </div>
+
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
+                        <th onclick="sortBy('id')" style="cursor: pointer;">ID ↕️</th>
+                        <th onclick="sortBy('email')" style="cursor: pointer;">Email ↕️</th>
+                        <th>Status</th>
+                        <th onclick="sortBy('created_at')" style="cursor: pointer;">Created ↕️</th>
+                        <th onclick="sortBy('last_login')" style="cursor: pointer;">Last Login ↕️</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="users-tbody">
+                    <tr><td colspan="7" class="loading">Loading users...</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
+
     <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        let allUsers = [];
+        let filteredUsers = [];
+        let currentFilter = 'all';
+        let sortField = 'created_at';
+        let sortDirection = 'desc';
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/admin/users/data', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to load users');
+                }
+                
+                allUsers = await response.json();
+                applyFilter();
+                updateStats();
+            } catch (error) {
+                console.error('Error loading users:', error);
+                document.getElementById('users-tbody').innerHTML = 
+                    '<tr><td colspan="7" style="color: #f44336; text-align: center;">Error loading users</td></tr>';
+            }
+        }
+
+        function applyFilter() {
+            const searchTerm = document.getElementById('search-input').value.toLowerCase();
+            
+            filteredUsers = allUsers.filter(user => {
+                // Search filter
+                const matchesSearch = !searchTerm || 
+                    user.email.toLowerCase().includes(searchTerm) ||
+                    user.id.toString().includes(searchTerm) ||
+                    (user.created_at && user.created_at.includes(searchTerm));
+
+                // Status filter
+                let matchesFilter = true;
+                switch(currentFilter) {
+                    case 'verified':
+                        matchesFilter = user.email_verified;
+                        break;
+                    case 'beta':
+                        matchesFilter = user.has_beta;
+                        break;
+                    case 'unverified':
+                        matchesFilter = !user.email_verified;
+                        break;
+                    case 'recent':
+                        const weekAgo = new Date();
+                        weekAgo.setDate(weekAgo.getDate() - 7);
+                        matchesFilter = new Date(user.created_at) > weekAgo;
+                        break;
+                }
+
+                return matchesSearch && matchesFilter;
+            });
+
+            sortUsers();
+            renderUsers();
+            updateStats();
+        }
+
+        function sortUsers() {
+            filteredUsers.sort((a, b) => {
+                let aVal = a[sortField] || '';
+                let bVal = b[sortField] || '';
+                
+                if (sortField === 'id') {
+                    aVal = parseInt(aVal);
+                    bVal = parseInt(bVal);
+                } else if (sortField.includes('_at') || sortField.includes('login')) {
+                    aVal = new Date(aVal || 0);
+                    bVal = new Date(bVal || 0);
+                }
+                
+                if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+                if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        function renderUsers() {
+            const tbody = document.getElementById('users-tbody');
+            
+            if (filteredUsers.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No users found matching your criteria</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filteredUsers.map(user => `
+                <tr data-user-id="${user.id}">
+                    <td><input type="checkbox" class="user-checkbox" value="${user.id}" onchange="updateBulkActions()"></td>
+                    <td>#${user.id}</td>
+                    <td><strong>${user.email}</strong></td>
+                    <td>
+                        ${user.email_verified ? '<span class="badge badge-success">✓ Verified</span>' : '<span class="badge badge-secondary">Unverified</span>'}
+                        ${user.has_beta ? '<span class="badge badge-warning">🚀 Beta</span>' : ''}
+                    </td>
+                    <td>${formatDate(user.created_at)}</td>
+                    <td>${user.last_login ? formatDate(user.last_login) : '<span style="color: #6c757d;">Never</span>'}</td>
+                    <td class="actions">
+                        ${!user.has_beta ? 
+                            `<button class="btn btn-warning" onclick="toggleBeta(${user.id}, 'grant')" title="Grant Beta">🚀</button>` :
+                            `<button class="btn btn-secondary" onclick="toggleBeta(${user.id}, 'revoke')" title="Revoke Beta">❌</button>`
+                        }
+                        <button class="btn btn-danger" onclick="deleteUser(${user.id})" title="Delete User">🗑️</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function updateStats() {
+            document.getElementById('showing-count').textContent = filteredUsers.length;
+            document.getElementById('total-count').textContent = allUsers.length;
+            document.getElementById('beta-count').textContent = allUsers.filter(u => u.has_beta).length;
+        }
+
+        function setFilter(filter) {
+            currentFilter = filter;
+            document.querySelectorAll('.filter-tab').forEach(tab => tab.classList.remove('active'));
+            event.target.classList.add('active');
+            applyFilter();
+        }
+
+        function sortBy(field) {
+            if (sortField === field) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortField = field;
+                sortDirection = 'asc';
+            }
+            applyFilter();
+        }
+
+        function filterUsers() {
+            applyFilter();
+        }
+
+        function refreshUsers() {
+            loadUsers();
+        }
+
+        async function toggleBeta(userId, action) {
+            try {
+                const response = await fetch('/admin/users/beta', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ user_id: userId, action })
+                });
+
+                if (response.ok) {
+                    loadUsers(); // Refresh data
+                } else {
+                    alert('Failed to update user beta status');
+                }
+            } catch (error) {
+                console.error('Error updating beta status:', error);
+                alert('Error updating user');
+            }
+        }
+
+        async function deleteUser(userId) {
+            if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/admin/users/${userId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (response.ok) {
+                    loadUsers(); // Refresh data
+                } else {
+                    alert('Failed to delete user');
+                }
+            } catch (error) {
+                console.error('Error deleting user:', error);
+                alert('Error deleting user');
+            }
+        }
+
+        function toggleSelectAll() {
+            const selectAll = document.getElementById('select-all');
+            const checkboxes = document.querySelectorAll('.user-checkbox');
+            
+            checkboxes.forEach(cb => cb.checked = selectAll.checked);
+            updateBulkActions();
+        }
+
+        function updateBulkActions() {
+            const selected = document.querySelectorAll('.user-checkbox:checked');
+            const bulkActions = document.getElementById('bulk-actions');
+            const selectedCount = document.getElementById('selected-count');
+            
+            if (selected.length > 0) {
+                bulkActions.classList.add('show');
+                selectedCount.textContent = `${selected.length} users selected`;
+            } else {
+                bulkActions.classList.remove('show');
+            }
+        }
+
+        async function bulkGrantBeta() {
+            const selected = Array.from(document.querySelectorAll('.user-checkbox:checked')).map(cb => cb.value);
+            if (selected.length === 0) return;
+            
+            if (!confirm(`Grant beta access to ${selected.length} users?`)) return;
+            
+            for (const userId of selected) {
+                await toggleBeta(userId, 'grant');
+            }
+        }
+
+        async function bulkRevokeBeta() {
+            const selected = Array.from(document.querySelectorAll('.user-checkbox:checked')).map(cb => cb.value);
+            if (selected.length === 0) return;
+            
+            if (!confirm(`Revoke beta access from ${selected.length} users?`)) return;
+            
+            for (const userId of selected) {
+                await toggleBeta(userId, 'revoke');
+            }
+        }
+
+        async function bulkDelete() {
+            const selected = Array.from(document.querySelectorAll('.user-checkbox:checked')).map(cb => cb.value);
+            if (selected.length === 0) return;
+            
+            if (!confirm(`DELETE ${selected.length} users? This cannot be undone!`)) return;
+            
+            for (const userId of selected) {
+                await deleteUser(userId);
+            }
+        }
+
+        function exportUsers() {
+            const csv = [
+                ['ID', 'Email', 'Verified', 'Beta', 'Created', 'Last Login'].join(','),
+                ...filteredUsers.map(user => [
+                    user.id,
+                    user.email,
+                    user.email_verified ? 'Yes' : 'No',
+                    user.has_beta ? 'Yes' : 'No',
+                    formatDate(user.created_at),
+                    user.last_login ? formatDate(user.last_login) : 'Never'
+                ].join(','))
+            ].join('\\n');
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `vault-users-${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return 'Never';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
         function logout() {
             localStorage.removeItem('admin_token');
             window.location.href = '/admin';
         }
+
+        // Initialize page
+        loadUsers();
     </script>
     '''
 
@@ -644,15 +609,125 @@ async def admin_beta_page():
             <a href="/admin/analytics">Analytics</a>
         </div>
         <div class="card">
-            <h3>Beta Key Generation</h3>
-            <p>Beta key management functionality coming soon...</p>
+            <h3>Generate New Beta Key</h3>
+            <button class="btn btn-primary" onclick="generateBetaKey()">🔑 Generate Beta Key</button>
+            <div id="new-key-result" style="margin-top: 15px;"></div>
+        </div>
+        <div class="card">
+            <h3>Existing Beta Keys</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>Created</th>
+                        <th>Used By</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="beta-keys-tbody">
+                    <tr><td colspan="4">Loading...</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
+
     <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function generateBetaKey() {
+            try {
+                const response = await fetch('/admin/beta/generate', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('new-key-result').innerHTML = 
+                        `<div style="background: #4CAF50; color: white; padding: 15px; border-radius: 5px;">
+                            <strong>New Beta Key Generated:</strong><br>
+                            <code style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 3px; font-size: 1.1em;">${result.key}</code>
+                        </div>`;
+                    loadBetaKeys(); // Refresh the list
+                } else {
+                    document.getElementById('new-key-result').innerHTML = 
+                        `<div style="background: #f44336; color: white; padding: 15px; border-radius: 5px;">
+                            Error: ${result.detail}
+                        </div>`;
+                }
+            } catch (error) {
+                console.error('Error generating beta key:', error);
+            }
+        }
+
+        async function loadBetaKeys() {
+            try {
+                const response = await fetch('/admin/beta/keys', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (response.ok) {
+                    const keys = await response.json();
+                    const tbody = document.getElementById('beta-keys-tbody');
+                    
+                    if (keys.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #6c757d;">No beta keys found</td></tr>';
+                        return;
+                    }
+                    
+                    tbody.innerHTML = keys.map(key => `
+                        <tr>
+                            <td><code>${key.key}</code></td>
+                            <td>${formatDate(key.created_at)}</td>
+                            <td>${key.used_by || '<span style="color: #6c757d;">Unused</span>'}</td>
+                            <td>
+                                <button class="btn btn-danger" onclick="deleteBetaKey('${key.key}')">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    document.getElementById('beta-keys-tbody').innerHTML = 
+                        '<tr><td colspan="4" style="color: #f44336;">Error loading beta keys</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading beta keys:', error);
+            }
+        }
+
+        async function deleteBetaKey(keyValue) {
+            if (!confirm('Are you sure you want to delete this beta key?')) return;
+            
+            try {
+                const response = await fetch(`/admin/beta/keys/${keyValue}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (response.ok) {
+                    loadBetaKeys(); // Refresh the list
+                } else {
+                    alert('Failed to delete beta key');
+                }
+            } catch (error) {
+                console.error('Error deleting beta key:', error);
+            }
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return 'Never';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
         function logout() {
             localStorage.removeItem('admin_token');
             window.location.href = '/admin';
         }
+
+        // Initialize page
+        loadBetaKeys();
     </script>
     '''
 
@@ -662,7 +737,7 @@ async def admin_releases_page():
     return ADMIN_STYLES + '''
     <div class="container">
         <div class="header">
-            <h1>📦 Release Management</h1>
+            <h1>🚀 Release Management</h1>
             <button class="btn btn-danger" onclick="logout()">Logout</button>
         </div>
         <div class="nav">
@@ -672,20 +747,251 @@ async def admin_releases_page():
             <a href="/admin/releases" class="active">Releases</a>
             <a href="/admin/analytics">Analytics</a>
         </div>
+        
         <div class="card">
-            <h3>Upload New Release</h3>
-            <p>Release management functionality coming soon...</p>
+            <h3>📤 Upload New Release</h3>
+            <form id="upload-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label>Version Number</label>
+                    <input type="text" id="version" placeholder="e.g., 2.0.7-beta" required>
+                </div>
+                <div class="form-group">
+                    <label>Release Notes</label>
+                    <textarea id="notes" rows="4" style="width: 100%; padding: 10px; background: #333; border: 1px solid #555; border-radius: 4px; color: white;" placeholder="What's new in this version..."></textarea>
+                </div>
+                <div class="upload-area" onclick="document.getElementById('file-input').click()">
+                    <input type="file" id="file-input" accept=".exe" style="display: none;" onchange="handleFileSelect()">
+                    <div id="upload-text">
+                        📁 Click to select Vault.exe file<br>
+                        <small style="color: #6c757d;">Only .exe files are accepted</small>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 15px;">🚀 Upload Release</button>
+            </form>
+            <div id="upload-progress" style="display: none; margin-top: 15px;">
+                <div style="background: #333; border-radius: 10px; overflow: hidden;">
+                    <div id="progress-bar" style="height: 20px; background: #4CAF50; width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <div id="progress-text" style="text-align: center; margin-top: 5px;">Uploading...</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📦 Release History</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Version</th>
+                        <th>File Size</th>
+                        <th>Upload Date</th>
+                        <th>Downloads</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="releases-tbody">
+                    <tr><td colspan="6">Loading releases...</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
+
     <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        let selectedFile = null;
+
+        function handleFileSelect() {
+            const fileInput = document.getElementById('file-input');
+            const uploadText = document.getElementById('upload-text');
+            
+            if (fileInput.files.length > 0) {
+                selectedFile = fileInput.files[0];
+                uploadText.innerHTML = `
+                    ✅ Selected: ${selectedFile.name}<br>
+                    <small style="color: #4CAF50;">Size: ${(selectedFile.size / 1024 / 1024).toFixed(2)} MB</small>
+                `;
+            }
+        }
+
+        document.getElementById('upload-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (!selectedFile) {
+                alert('Please select a file to upload');
+                return;
+            }
+            
+            const version = document.getElementById('version').value;
+            const notes = document.getElementById('notes').value;
+            
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('version', version);
+            formData.append('notes', notes);
+            
+            const progressDiv = document.getElementById('upload-progress');
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            
+            progressDiv.style.display = 'block';
+            
+            try {
+                const xhr = new XMLHttpRequest();
+                
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percentComplete = (e.loaded / e.total) * 100;
+                        progressBar.style.width = percentComplete + '%';
+                        progressText.textContent = `Uploading... ${Math.round(percentComplete)}%`;
+                    }
+                });
+                
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        progressText.textContent = 'Upload complete!';
+                        progressBar.style.background = '#4CAF50';
+                        loadReleases(); // Refresh the list
+                        
+                        // Reset form
+                        document.getElementById('upload-form').reset();
+                        selectedFile = null;
+                        document.getElementById('upload-text').innerHTML = 
+                            '📁 Click to select Vault.exe file<br><small style="color: #6c757d;">Only .exe files are accepted</small>';
+                        
+                        setTimeout(() => {
+                            progressDiv.style.display = 'none';
+                            progressBar.style.width = '0%';
+                        }, 3000);
+                    } else {
+                        progressText.textContent = 'Upload failed!';
+                        progressBar.style.background = '#f44336';
+                    }
+                };
+                
+                xhr.open('POST', '/admin/releases/upload');
+                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+                xhr.send(formData);
+                
+            } catch (error) {
+                console.error('Upload error:', error);
+                progressText.textContent = 'Upload error!';
+                progressBar.style.background = '#f44336';
+            }
+        });
+
+        async function loadReleases() {
+            try {
+                const response = await fetch('/admin/releases/list', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (response.ok) {
+                    const releases = await response.json();
+                    const tbody = document.getElementById('releases-tbody');
+                    
+                    if (releases.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #6c757d;">No releases found</td></tr>';
+                        return;
+                    }
+                    
+                    tbody.innerHTML = releases.map(release => `
+                        <tr>
+                            <td><strong>${release.version}</strong></td>
+                            <td>${formatFileSize(release.file_size)}</td>
+                            <td>${formatDate(release.created_at)}</td>
+                            <td>${release.download_count || 0}</td>
+                            <td>
+                                <span class="badge ${release.is_current ? 'badge-success' : 'badge-secondary'}">
+                                    ${release.is_current ? 'Current' : 'Archived'}
+                                </span>
+                            </td>
+                            <td class="actions">
+                                ${!release.is_current ? 
+                                    `<button class="btn btn-warning" onclick="setCurrentRelease('${release.version}')">Set Current</button>` : 
+                                    '<span style="color: #4CAF50;">✓ Current</span>'
+                                }
+                                <button class="btn btn-danger" onclick="deleteRelease('${release.version}')">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    document.getElementById('releases-tbody').innerHTML = 
+                        '<tr><td colspan="6" style="color: #f44336;">Error loading releases</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading releases:', error);
+            }
+        }
+
+        async function setCurrentRelease(version) {
+            if (!confirm(`Set version ${version} as the current release?`)) return;
+            
+            try {
+                const response = await fetch('/admin/releases/set-current', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ version })
+                });
+                
+                if (response.ok) {
+                    loadReleases(); // Refresh the list
+                } else {
+                    alert('Failed to set current release');
+                }
+            } catch (error) {
+                console.error('Error setting current release:', error);
+            }
+        }
+
+        async function deleteRelease(version) {
+            if (!confirm(`Delete version ${version}? This action cannot be undone.`)) return;
+            
+            try {
+                const response = await fetch(`/admin/releases/${version}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (response.ok) {
+                    loadReleases(); // Refresh the list
+                } else {
+                    alert('Failed to delete release');
+                }
+            } catch (error) {
+                console.error('Error deleting release:', error);
+            }
+        }
+
+        function formatFileSize(bytes) {
+            if (!bytes) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return 'Never';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
         function logout() {
             localStorage.removeItem('admin_token');
             window.location.href = '/admin';
         }
+
+        // Initialize page
+        loadReleases();
     </script>
     '''
 
-@router.get("/analytics", response_class=HTMLResponse) 
+@router.get("/analytics", response_class=HTMLResponse)
 async def admin_analytics_page():
     """Analytics dashboard page"""
     return ADMIN_STYLES + '''
@@ -701,15 +1007,142 @@ async def admin_analytics_page():
             <a href="/admin/releases">Releases</a>
             <a href="/admin/analytics" class="active">Analytics</a>
         </div>
+        
         <div class="card">
-            <h3>Analytics Overview</h3>
-            <p>Analytics dashboard functionality coming soon...</p>
+            <h3>📈 Usage Statistics</h3>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number" id="total-sessions">0</div>
+                    <div class="stat-label">Total Sessions</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="active-users">0</div>
+                    <div class="stat-label">Active Users (7d)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="avg-session">0</div>
+                    <div class="stat-label">Avg Session (min)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="crash-rate">0%</div>
+                    <div class="stat-label">Crash Rate</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>🖥️ Platform Distribution</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Operating System</th>
+                        <th>Users</th>
+                        <th>Sessions</th>
+                        <th>Percentage</th>
+                    </tr>
+                </thead>
+                <tbody id="platform-tbody">
+                    <tr><td colspan="4">Loading analytics...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h3>📅 Recent Activity</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Sessions</th>
+                        <th>Unique Users</th>
+                        <th>Crashes</th>
+                        <th>Version</th>
+                    </tr>
+                </thead>
+                <tbody id="activity-tbody">
+                    <tr><td colspan="5">Loading recent activity...</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
+
     <script>
+        const token = localStorage.getItem('admin_token');
+        if (!token) window.location.href = '/admin';
+
+        async function loadAnalytics() {
+            try {
+                const response = await fetch('/admin/analytics/data', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Update statistics
+                    document.getElementById('total-sessions').textContent = data.total_sessions || 0;
+                    document.getElementById('active-users').textContent = data.active_users || 0;
+                    document.getElementById('avg-session').textContent = data.avg_session_minutes || 0;
+                    document.getElementById('crash-rate').textContent = (data.crash_rate || 0) + '%';
+                    
+                    // Update platform table
+                    const platformTbody = document.getElementById('platform-tbody');
+                    if (data.platforms && data.platforms.length > 0) {
+                        platformTbody.innerHTML = data.platforms.map(platform => `
+                            <tr>
+                                <td>${platform.os}</td>
+                                <td>${platform.users}</td>
+                                <td>${platform.sessions}</td>
+                                <td>${platform.percentage}%</td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        platformTbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #6c757d;">No platform data available</td></tr>';
+                    }
+                    
+                    // Update activity table
+                    const activityTbody = document.getElementById('activity-tbody');
+                    if (data.recent_activity && data.recent_activity.length > 0) {
+                        activityTbody.innerHTML = data.recent_activity.map(activity => `
+                            <tr>
+                                <td>${formatDate(activity.date)}</td>
+                                <td>${activity.sessions}</td>
+                                <td>${activity.unique_users}</td>
+                                <td>${activity.crashes}</td>
+                                <td>${activity.version}</td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        activityTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #6c757d;">No recent activity data</td></tr>';
+                    }
+                    
+                } else {
+                    console.error('Failed to load analytics');
+                    document.getElementById('platform-tbody').innerHTML = 
+                        '<tr><td colspan="4" style="color: #f44336;">Error loading analytics data</td></tr>';
+                    document.getElementById('activity-tbody').innerHTML = 
+                        '<tr><td colspan="5" style="color: #f44336;">Error loading analytics data</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading analytics:', error);
+            }
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return 'Never';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString();
+        }
+
         function logout() {
             localStorage.removeItem('admin_token');
             window.location.href = '/admin';
         }
+
+        // Initialize page
+        loadAnalytics();
+        
+        // Auto-refresh every 5 minutes
+        setInterval(loadAnalytics, 5 * 60 * 1000);
     </script>
     '''
