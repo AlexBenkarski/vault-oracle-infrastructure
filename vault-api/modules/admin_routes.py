@@ -1,20 +1,68 @@
 """Admin API Routes - All admin functionality endpoints"""
 
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 import sqlite3
 import os
 import shutil
+import subprocess
+import hashlib
 from datetime import datetime
 from typing import List
 
-from auth import verify_admin_token
-from models import UserAction, ReleaseData
+from auth import verify_admin_token, create_access_token
+from models import UserAction, ReleaseData, AdminLogin
 from database import get_db_connection
 from config import UPLOAD_DIR, USER_DB_PATH
+from services_monitor import get_all_services_status
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+# ADMIN AUTHENTICATION
+@router.post("/auth")
+async def admin_login(login_data: AdminLogin):
+    """Admin authentication endpoint"""
+    try:
+        # Check credentials against database
+        conn = sqlite3.connect(USER_DB_PATH)
+        
+        # Use SHA256 for admin password (legacy compatibility)
+        password_hash = hashlib.sha256(login_data.password.encode()).hexdigest()
+        
+        cursor = conn.execute('''
+            SELECT username, password_hash FROM admin_users 
+            WHERE username = ? AND password_hash = ?
+        ''', (login_data.username, password_hash))
+        
+        result = cursor.fetchone()
+        
+        if not result:
+            conn.close()
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        # Update last login
+        conn.execute('''
+            UPDATE admin_users SET last_login = CURRENT_TIMESTAMP 
+            WHERE username = ?
+        ''', (login_data.username,))
+        conn.commit()
+        conn.close()
+        
+        # Create JWT token with admin role
+        token = create_access_token({"sub": login_data.username, "role": "admin"})
+        
+        return {
+            "access_token": token, 
+            "token_type": "bearer", 
+            "message": "Admin login successful"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Login error: {str(e)}")
+
+# DASHBOARD STATISTICS
 @router.get("/stats")
 async def get_admin_stats(admin_user: str = Depends(verify_admin_token)):
     """Get dashboard statistics"""
@@ -52,6 +100,7 @@ async def get_admin_stats(admin_user: str = Depends(verify_admin_token)):
         "analytics_users": analytics_users
     }
 
+# USER MANAGEMENT
 @router.get("/users/data")
 async def get_users_data(admin_user: str = Depends(verify_admin_token)):
     """Get all users data for management"""
@@ -84,6 +133,7 @@ async def toggle_user_beta(action_data: UserAction, admin_user: str = Depends(ve
     
     return {"message": f"Beta access {'granted' if grant_beta else 'revoked'} successfully"}
 
+# RELEASE MANAGEMENT
 @router.post("/releases/upload")
 async def upload_release(
     file: UploadFile = File(...),
@@ -184,3 +234,60 @@ async def delete_release(release_data: ReleaseData, admin_user: str = Depends(ve
     conn.close()
     
     return {"message": "Release deleted successfully"}
+
+# SERVICE MONITORING ENDPOINTS
+@router.get("/services/status")
+async def get_services_status(admin_user: str = Depends(verify_admin_token)):
+    """Get status of all monitored services"""
+    return get_all_services_status()
+
+@router.post("/services/start/{service_name}")
+async def start_service(service_name: str, admin_user: str = Depends(verify_admin_token)):
+    """Start a systemd service"""
+    allowed_services = ['vault-api', 'nginx', 'discord-bot']
+    if service_name not in allowed_services:
+        raise HTTPException(status_code=400, detail="Service not allowed")
+    
+    try:
+        result = subprocess.run(['sudo', 'systemctl', 'start', service_name],
+                              capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return {"status": "started", "service": service_name}
+        else:
+            raise HTTPException(status_code=500, detail=result.stderr)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/services/stop/{service_name}")
+async def stop_service(service_name: str, admin_user: str = Depends(verify_admin_token)):
+    """Stop a systemd service"""
+    allowed_services = ['vault-api', 'nginx', 'discord-bot']
+    if service_name not in allowed_services:
+        raise HTTPException(status_code=400, detail="Service not allowed")
+    
+    try:
+        result = subprocess.run(['sudo', 'systemctl', 'stop', service_name],
+                              capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return {"status": "stopped", "service": service_name}
+        else:
+            raise HTTPException(status_code=500, detail=result.stderr)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/services/restart/{service_name}")
+async def restart_service(service_name: str, admin_user: str = Depends(verify_admin_token)):
+    """Restart a systemd service"""
+    allowed_services = ['vault-api', 'nginx', 'discord-bot']
+    if service_name not in allowed_services:
+        raise HTTPException(status_code=400, detail="Service not allowed")
+    
+    try:
+        result = subprocess.run(['sudo', 'systemctl', 'restart', service_name],
+                              capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return {"status": "restarted", "service": service_name}
+        else:
+            raise HTTPException(status_code=500, detail=result.stderr)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
